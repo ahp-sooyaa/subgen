@@ -58,6 +58,24 @@ final class ViewerModel: ObservableObject {
     }
 }
 
+/// AppKit's AVPlayerView. SwiftUI's VideoPlayer (_AVKit_SwiftUI) crashes on launch when the SDK the
+/// app was built with is newer than the installed AVKit, so the AppKit view is used directly.
+struct PlayerView: NSViewRepresentable {
+    let player: AVPlayer
+
+    func makeNSView(context: Context) -> AVPlayerView {
+        let view = AVPlayerView()
+        view.player = player
+        view.controlsStyle = .inline
+        view.showsFullScreenToggleButton = true
+        return view
+    }
+
+    func updateNSView(_ view: AVPlayerView, context: Context) {
+        if view.player !== player { view.player = player }
+    }
+}
+
 struct ViewerView: View {
     let jobID: UUID
     @EnvironmentObject private var store: JobStore
@@ -87,9 +105,8 @@ struct ViewerContent: View {
 
     var body: some View {
         HSplitView {
-            VideoPlayer(player: model.player) {
-                VStack {
-                    Spacer()
+            PlayerView(player: model.player)
+                .overlay(alignment: .bottom) {
                     if let i = model.current {
                         Text(overlay(model.cues[i]))
                             .font(.system(size: 22, weight: .semibold))
@@ -99,12 +116,10 @@ struct ViewerContent: View {
                             .padding(.horizontal, 10).padding(.vertical, 4)
                             .background(.black.opacity(0.45), in: RoundedRectangle(cornerRadius: 6))
                             .padding(.bottom, 56)
+                            .allowsHitTesting(false)
                     }
                 }
-                .frame(maxWidth: .infinity)
-                .allowsHitTesting(false)
-            }
-            .frame(minWidth: 520)
+                .frame(minWidth: 520)
 
             cueList.frame(minWidth: 340, idealWidth: 420)
         }
