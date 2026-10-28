@@ -45,3 +45,14 @@ For videos without burned-in captions, or to compare against OCR. Install the ex
 - `--whisper-hints`: also give Whisper the glossary names (a second Whisper pass; small gain).
 - `subgen-compare <video> --ref <ocr .zh.srt> [--start --duration]` runs both engines and scores them
   against the OCR captions: character error rate, timing, and speed. Writes `work/<id>/compare.md`.
+
+## Mac app
+`app/` is a SwiftUI front end for the same pipeline: a job queue, live progress per stage with ETA,
+pause / continue / stop, resume after stopping or quitting (finished chunks come from the cache), a
+glossary editor with "Save & Re-translate", and a viewer that plays the video with the subtitles and
+lets you fix English lines. It runs `.venv/bin/subgen --events …`, so the CLI setup above is required.
+```
+cd ~/Personal/subgen/app && xcodegen generate && xcodebuild -scheme Subgen -configuration Release -derivedDataPath build build
+open build/Build/Products/Release/Subgen.app
+```
+Settings (⌘,) set the subgen folder, output folder and Claude model.

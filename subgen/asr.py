@@ -126,6 +126,9 @@ def transcribe(video: Path, work: Path, engine: str, start: float = 0, duration:
     if not data or data.get("hints", []) != hints:  # cached run used other hint words
         data = run_engine(video, work, engine, start, duration, redo, hints)
         cache.write_text(json.dumps(data, ensure_ascii=False, indent=1))
+    else:
+        events.cached("audio")
+        events.cached(engine)
     info = {k: v for k, v in data.items() if k != "segments"}
     print(f"  {engine}: {info['audio_seconds'] / 60:.1f} min of audio in {info['seconds'] / 60:.1f} min")
     return to_cues(data["segments"]), info

@@ -3,3 +3,5 @@ work/
 out/
 __pycache__/
 *.egg-info/
+app/*.xcodeproj/
+app/build/

@@ -1,0 +1,25 @@
+name: Subgen
+options:
+  bundleIdPrefix: local.subgen
+  deploymentTarget:
+    macOS: "15.0"
+targets:
+  Subgen:
+    type: application
+    platform: macOS
+    sources: [Subgen]
+    settings:
+      base:
+        PRODUCT_BUNDLE_IDENTIFIER: local.subgen.app
+        PRODUCT_NAME: Subgen
+        GENERATE_INFOPLIST_FILE: YES
+        INFOPLIST_KEY_CFBundleDisplayName: Subgen
+        INFOPLIST_KEY_LSApplicationCategoryType: public.app-category.video
+        MARKETING_VERSION: "0.1"
+        CURRENT_PROJECT_VERSION: "1"
+        SWIFT_VERSION: "5.0"
+        # Personal tool: runs the repo's Python and ffmpeg, so no sandbox; ad-hoc signed.
+        ENABLE_APP_SANDBOX: NO
+        ENABLE_HARDENED_RUNTIME: NO
+        CODE_SIGN_IDENTITY: "-"
+        CODE_SIGN_STYLE: Manual

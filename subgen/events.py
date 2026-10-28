@@ -34,6 +34,11 @@ def stage(name: str):
     emit("stage", stage=name, status="done", seconds=round(time.time() - t0, 1))
 
 
+def cached(name: str):
+    """A stage whose result came from the cache: report it as done right away."""
+    emit("stage", stage=name, status="done", seconds=0, cached=True)
+
+
 def progress(stage_name: str, done: float, total: float, text: str):
     """Print `text` as the usual \\r status line and emit a throttled progress event with an ETA."""
     sys.stdout.write(f"\r  {text} ")

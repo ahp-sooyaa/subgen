@@ -92,6 +92,7 @@ def run(a):
         reg_path.write_text(json.dumps(reg))
     elif reg_path.exists() and redo > 0:
         reg = json.loads(reg_path.read_text())
+        events.cached("region")
     else:
         with events.stage("region"):
             reg = region.detect(video, W, H, a.start, end, n=min(120, max(40, int((end - a.start) / 10))))
@@ -115,6 +116,8 @@ def run(a):
                           total, a.start, a.duration, params)
         params_path.write_text(json.dumps(params))
         redo = min(redo, 2)
+    else:
+        events.cached("ocr")
 
     # 3. cues
     cues = cuesmod.build(frames, a.fps, a.sim)
