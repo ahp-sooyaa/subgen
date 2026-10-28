@@ -5,7 +5,7 @@ import re
 from pathlib import Path
 
 from . import cues as cuesmod
-from . import fetch, ocr, region, translate
+from . import asr, fetch, ocr, region, translate
 
 ROOT = Path(__file__).resolve().parent.parent
 # Overlay text that sits inside the caption band but is never dialogue (matched lowercase).
@@ -29,7 +29,8 @@ def main():
     ap.add_argument("--speakers", action="store_true", help="prefix English lines with the speaker name")
     ap.add_argument("--bilingual", action="store_true", help="also write an English+Chinese .srt")
     ap.add_argument("--no-translate", action="store_true", help="stop after writing the Chinese .srt")
-    ap.add_argument("--redo", choices=["region", "ocr", "translate"], help="ignore cached results from this stage on")
+    ap.add_argument("--asr", choices=asr.ENGINES, help="use speech recognition instead of OCR (Mandarin audio)")
+    ap.add_argument("--redo", choices=["region", "ocr", "asr", "translate"], help="ignore cached results from this stage on")
     a = ap.parse_args()
 
     slug = fetch.slug_for(a.src)
@@ -37,12 +38,19 @@ def main():
         slug += f"_{int(a.start)}_{int(a.duration or 0)}"
     work = ROOT / "work" / slug
     work.mkdir(parents=True, exist_ok=True)
-    redo = {"region": 0, "ocr": 1, "translate": 2}.get(a.redo, 99)
+    redo = {"region": 0, "ocr": 1, "asr": 1, "translate": 2}.get(a.redo, 99)
 
     video, title = fetch.fetch(a.src, ROOT / "work" / fetch.slug_for(a.src))
     W, H, total = fetch.probe(video)
     end = min(total, a.start + a.duration) if a.duration else total
     print(f"Video: {title or video.name}  ({W}x{H}, {(end - a.start) / 60:.1f} min)")
+
+    name = a.name or (re.sub(r'[\\/:*?"<>|]+', "_", title).strip()[:80] if title else slug)
+    a.out.mkdir(parents=True, exist_ok=True)
+    if a.asr:
+        cues, _info = asr.transcribe(video, work, a.asr, a.start, a.duration, redo <= 1)
+        finish(a, cues, work, title, f"{name}.asr-{a.asr}", "asr", f"translate_asr-{a.asr}", redo)
+        return
 
     # 1. caption band
     reg_path = work / "region.json"
@@ -74,8 +82,11 @@ def main():
 
     # 3. cues
     cues = cuesmod.build(frames, a.fps, a.sim)
-    name = a.name or (re.sub(r'[\\/:*?"<>|]+', "_", title).strip()[:80] if title else slug)
-    a.out.mkdir(parents=True, exist_ok=True)
+    finish(a, cues, work, title, name, "ocr", "translate", redo)
+
+
+def finish(a, cues, work, title, name, source, cache_name, redo):
+    """Write the Chinese .srt, then translate and write the English ones."""
     zh_path = a.out / f"{name}.zh.srt"
     cuesmod.write_srt(cues, zh_path, "zh")
     print(f"  {len(cues)} captions → {zh_path}")
@@ -84,11 +95,11 @@ def main():
 
     # 4. translate
     if redo <= 2:
-        for f in (work / "translate").glob("*.json"):
+        for f in (work / cache_name).glob("*.json"):
             f.unlink()
     glossary = a.glossary.read_text() if a.glossary.exists() else ""
-    cues = translate.translate(cues, work, glossary, title, a.model)
-    (work / "cues.json").write_text(json.dumps(cues, ensure_ascii=False, indent=1))
+    cues = translate.translate(cues, work, glossary, title, a.model, source=source, cache_name=cache_name)
+    (work / ("cues.json" if source == "ocr" else f"cues_{cache_name}.json")).write_text(json.dumps(cues, ensure_ascii=False, indent=1))
     cues = cuesmod.polish(cues)
     en_path = a.out / f"{name}.en.srt"
     cuesmod.write_srt(cues, en_path, "en", a.speakers)

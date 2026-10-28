@@ -30,3 +30,13 @@ Useful options:
 5. Cues are translated in batches of 80 with `claude -p` (three batches at a time). Ads and OCR garbage come back as `[DROP]` and are removed.
 
 Requires `ffmpeg` (Homebrew) and the `claude` CLI logged in.
+
+## Speech recognition (experimental, Mandarin only)
+For videos without burned-in captions, or to compare against OCR. Install the extra once:
+```
+~/Personal/subgen/.venv/bin/pip install -e '.[asr]'
+```
+- `--asr whisper` (mlx-whisper large-v3-turbo) or `--asr sensevoice` (FunASR SenseVoiceSmall) uses the
+  audio instead of OCR. Outputs `<name>.asr-<engine>.zh.srt` / `.en.srt`. Models download on first use.
+- `subgen-compare <video> --ref <ocr .zh.srt> [--start --duration]` runs both engines and scores them
+  against the OCR captions: character error rate, timing, and speed. Writes `work/<id>/compare.md`.
