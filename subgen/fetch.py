@@ -26,10 +26,15 @@ def fetch(src: str, workdir: Path) -> tuple[Path, str]:
 
     video = workdir / "video.mp4"
     meta = workdir / "meta.json"
-    if video.exists() and meta.exists():
-        return video, json.loads(meta.read_text())["title"]
-
     import yt_dlp
+
+    if video.exists() and meta.exists():
+        m = json.loads(meta.read_text())
+        if "description" not in m:  # cached before descriptions were kept
+            with yt_dlp.YoutubeDL({"quiet": True, "noplaylist": True}) as ydl:
+                m["description"] = ydl.extract_info(src, download=False).get("description", "")
+            meta.write_text(json.dumps(m, ensure_ascii=False))
+        return video, m["title"]
 
     opts = {
         "noplaylist": True,
@@ -42,8 +47,15 @@ def fetch(src: str, workdir: Path) -> tuple[Path, str]:
     print("Downloading video (720p)…")
     with yt_dlp.YoutubeDL(opts) as ydl:
         info = ydl.extract_info(src, download=True)
-    meta.write_text(json.dumps({"title": info.get("title", ""), "id": info.get("id")}, ensure_ascii=False))
+    meta.write_text(json.dumps({"title": info.get("title", ""), "id": info.get("id"),
+                                "description": info.get("description", "")}, ensure_ascii=False))
     return video, info.get("title", "")
+
+
+def description(src: str, workdir: Path) -> str:
+    """The YouTube description saved by fetch() ('' for local files)."""
+    meta = workdir / "meta.json"
+    return json.loads(meta.read_text()).get("description", "") if is_url(src) and meta.exists() else ""
 
 
 def probe(video: Path) -> tuple[int, int, float]:

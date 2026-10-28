@@ -7,6 +7,7 @@ import time
 from pathlib import Path
 
 ENGINES = ("sensevoice", "whisper")
+MERGE = "merge"  # whisper timing + sensevoice as a second opinion, reconciled by the translator
 WHISPER_REPO = "mlx-community/whisper-large-v3-turbo"
 RATE = 16000
 MAX_CHARS = 20
@@ -39,8 +40,13 @@ def extract_audio(video: Path, out: Path, start: float = 0, duration: float | No
     subprocess.run(cmd, check=True)
 
 
-def sensevoice(wav: Path) -> list[dict]:
-    """fsmn-vad finds speech segments, SenseVoiceSmall transcribes each one."""
+def hint_words(glossary: str) -> list[str]:
+    """Chinese names and places from glossary lines like `李沁 = Li Qin (she)`."""
+    return [l.split("=")[0].strip() for l in glossary.splitlines() if "=" in l]
+
+
+def sensevoice(wav: Path, hints: list[str]) -> list[dict]:
+    """fsmn-vad finds speech segments, SenseVoiceSmall transcribes each one (it takes no hint words)."""
     import soundfile as sf
     from funasr import AutoModel
 
@@ -60,12 +66,15 @@ def sensevoice(wav: Path) -> list[dict]:
     return segs
 
 
-def whisper(wav: Path) -> list[dict]:
+def whisper(wav: Path, hints: list[str]) -> list[dict]:
     import mlx_whisper
 
+    prompt = "以下是普通话综艺节目的对话。"
+    if hints:  # names in the prompt bias Whisper towards spelling them right
+        prompt += "人物和地点：" + "、".join(hints) + "。"
     res = mlx_whisper.transcribe(
         str(wav), path_or_hf_repo=WHISPER_REPO, language="zh", task="transcribe",
-        condition_on_previous_text=False, initial_prompt="以下是普通话综艺节目的对话。",
+        condition_on_previous_text=False, initial_prompt=prompt,
         verbose=False,
     )
     segs = []
@@ -78,28 +87,60 @@ def whisper(wav: Path) -> list[dict]:
     return segs
 
 
-def transcribe(video: Path, work: Path, engine: str, start: float = 0,
-               duration: float | None = None, redo: bool = False) -> tuple[list[dict], dict]:
-    """Return (cues, info). Raw segments and wall time are cached in work/asr_<engine>.json."""
-    cache = work / f"asr_{engine}.json"
-    if cache.exists() and not redo:
-        data = json.loads(cache.read_text())
-    else:
+def transcribe(video: Path, work: Path, engine: str, start: float = 0, duration: float | None = None,
+               redo: bool = False, hints: list[str] = ()) -> tuple[list[dict], dict]:
+    """Return (cues, info). Raw segments and wall time are cached in work/asr_<engine>[_hints].json."""
+    if engine == MERGE:
+        return merge(video, work, start, duration, redo, hints)
+    hints = list(hints) if engine == "whisper" else []
+    cache = work / f"asr_{engine}{'_hints' if hints else ''}.json"
+    data = json.loads(cache.read_text()) if cache.exists() and not redo else None
+    if not data or data.get("hints", []) != hints:  # cached run used other hint words
         wav = work / "audio.wav"
         if not wav.exists():
             extract_audio(video, wav, start, duration)
         print(f"  Speech recognition ({engine})…")
         t0 = time.time()
-        segs = {"sensevoice": sensevoice, "whisper": whisper}[engine](wav)
+        segs = {"sensevoice": sensevoice, "whisper": whisper}[engine](wav, hints)
         for s in segs:
             s["start"], s["end"] = round(s["start"] + start, 3), round(s["end"] + start, 3)
         import soundfile as sf
         data = {"engine": engine, "seconds": round(time.time() - t0, 1),
-                "audio_seconds": round(sf.info(str(wav)).duration, 1), "segments": segs}
+                "audio_seconds": round(sf.info(str(wav)).duration, 1), "hints": hints, "segments": segs}
         cache.write_text(json.dumps(data, ensure_ascii=False, indent=1))
     info = {k: v for k, v in data.items() if k != "segments"}
     print(f"  {engine}: {info['audio_seconds'] / 60:.1f} min of audio in {info['seconds'] / 60:.1f} min")
     return to_cues(data["segments"]), info
+
+
+def merge(video, work, start, duration, redo, hints) -> tuple[list[dict], dict]:
+    """Whisper cues, each carrying the SenseVoice text heard at the same time as `alt`."""
+    cues, wi = transcribe(video, work, "whisper", start, duration, redo, hints)
+    other, si = transcribe(video, work, "sensevoice", start, duration, redo, hints)
+    for c in cues:
+        c["alt"] = ""
+    extra = []
+    for o in other:
+        # Share each SenseVoice line among the Whisper lines it overlaps, by time, so a long
+        # line doesn't hand its neighbours' words to one Whisper line.
+        span = o["end"] - o["start"]
+        hits = [(c, min(c["end"], o["end"]) - max(c["start"], o["start"])) for c in cues]
+        hits = sorted(((c, ov) for c, ov in hits if ov > 0), key=lambda h: h[0]["start"])
+        if not hits:  # speech Whisper missed; keep it only if it's more than filler
+            if len(o["zh"]) >= 5:
+                extra.append({"start": o["start"], "end": o["end"], "zh": o["zh"], "alt": ""})
+            continue
+        i = 0
+        for c, ov in hits:
+            n = round(len(o["zh"]) * ov / span) if span > 0 else len(o["zh"])
+            c["alt"] += o["zh"][i:i + n]
+            i += n
+        hits[-1][0]["alt"] += o["zh"][i:]
+    cues = sorted(cues + extra, key=lambda c: c["start"])
+    for i, c in enumerate(cues, 1):
+        c["id"] = i
+    info = {"engine": MERGE, "seconds": wi["seconds"] + si["seconds"], "audio_seconds": wi["audio_seconds"]}
+    return cues, info
 
 
 def to_cues(segs: list[dict]) -> list[dict]:

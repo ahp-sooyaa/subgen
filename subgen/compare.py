@@ -24,11 +24,16 @@ def cer(ref: str, hyp: str) -> float:
     return Levenshtein.distance(ref, hyp) / max(len(ref), 1)
 
 
-def load_ref(path: Path, start: float, end: float) -> list[dict]:
+def secs(mmss: str) -> float:
+    m, s = mmss.split(":")
+    return int(m) * 60 + float(s)
+
+
+def load_ref(path: Path, start: float, end: float, skip: list[tuple[float, float]] = ()) -> list[dict]:
     out = []
     for s in srt.parse(path.read_text(encoding="utf-8")):
         t0, t1 = s.start.total_seconds(), s.end.total_seconds()
-        if start <= t0 < end:
+        if start <= t0 < end and not any(a <= t0 < b for a, b in skip):
             out.append({"start": t0, "end": t1, "zh": s.content})
     return out
 
@@ -60,6 +65,10 @@ def main():
     ap.add_argument("--start", type=float, default=0)
     ap.add_argument("--duration", type=float)
     ap.add_argument("--engines", default=",".join(asr.ENGINES), help="comma-separated (default: all)")
+    ap.add_argument("--srt", action="append", default=[], metavar="LABEL=PATH",
+                    help="also score this Chinese .srt (e.g. corrected output); repeatable")
+    ap.add_argument("--exclude", action="append", default=[], metavar="MM:SS-MM:SS",
+                    help="leave this time range out of the score on all sides (e.g. an ad break); repeatable")
     ap.add_argument("--window", type=float, default=60, help="seconds per CER window (default 60)")
     ap.add_argument("--redo", action="store_true", help="re-run speech recognition")
     a = ap.parse_args()
@@ -73,13 +82,19 @@ def main():
     _W, _H, total = fetch.probe(video)
     end = min(total, a.start + a.duration) if a.duration else total
 
-    ref = load_ref(a.ref, a.start, end)
+    skip = [tuple(secs(t) for t in r.split("-")) for r in a.exclude]
+    ref = load_ref(a.ref, a.start, end, skip)
     if not ref:
         raise SystemExit(f"No reference captions between {a.start}s and {end}s in {a.ref}")
-    engines = [e.strip() for e in a.engines.split(",")]
+    engines = [e.strip() for e in a.engines.split(",") if e.strip()]
     hyps, infos = {}, {}
     for e in engines:
         hyps[e], infos[e] = asr.transcribe(video, work, e, a.start, a.duration, a.redo)
+        hyps[e] = [c for c in hyps[e] if not any(x <= c["start"] < y for x, y in skip)]
+    for spec in a.srt:
+        label, path = spec.split("=", 1)
+        hyps[label], infos[label] = load_ref(Path(path), a.start, end, skip), None
+        engines.append(label)
 
     ref_text = in_window(ref, a.start, end)
     rows = []
@@ -87,14 +102,16 @@ def main():
         hyp = hyps[e]
         match, med = timing(ref, hyp)
         info = infos[e]
+        speed = ([f"{info['seconds']:.0f}s", f"{info['audio_seconds'] / max(info['seconds'], 0.1):.1f}x"]
+                 if info else ["-", "-"])
         rows.append([e, f"{cer(ref_text, in_window(hyp, a.start, end)):.1%}", f"{match:.0%}",
-                     f"{med:.2f}s" if med is not None else "-", str(len(hyp)),
-                     f"{info['seconds']:.0f}s", f"{info['audio_seconds'] / max(info['seconds'], 0.1):.1f}x"])
+                     f"{med:.2f}s" if med is not None else "-", str(len(hyp))] + speed)
 
     head = ["engine", "CER vs OCR", "OCR lines matched", "median start diff", "lines", "ASR time", "speed (x real time)"]
     md = [f"# ASR vs OCR: {title or video.name}", "",
           f"Range {a.start:.0f}s – {end:.0f}s ({(end - a.start) / 60:.1f} min), {len(ref)} OCR captions, "
-          f"{len(ref_text)} reference characters.", "",
+          f"{len(ref_text)} reference characters."
+          + (f" Excluded: {', '.join(a.exclude)}." if a.exclude else ""), "",
           "| " + " | ".join(head) + " |", "|" + "---|" * len(head)]
     md += ["| " + " | ".join(r) + " |" for r in rows]
     md += ["", "OCR captions are edited by the show (filler words dropped, some on-screen text that isn't "

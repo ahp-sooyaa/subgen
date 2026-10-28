@@ -25,11 +25,15 @@ def main():
     ap.add_argument("--sim", type=float, default=80, help="text similarity %% to treat frames as the same caption (default 80)")
     ap.add_argument("--change", type=float, default=0.1, help="pixel-change threshold that triggers a new OCR (default 0.1)")
     ap.add_argument("--model", default="sonnet", help="Claude model alias for translation (default sonnet)")
-    ap.add_argument("--glossary", type=Path, default=ROOT / "glossary.txt", help="name glossary file")
+    ap.add_argument("--glossary", type=Path,
+                    help="name glossary file (default: glossary.txt for OCR; built automatically for --asr)")
     ap.add_argument("--speakers", action="store_true", help="prefix English lines with the speaker name")
     ap.add_argument("--bilingual", action="store_true", help="also write an English+Chinese .srt")
     ap.add_argument("--no-translate", action="store_true", help="stop after writing the Chinese .srt")
-    ap.add_argument("--asr", choices=asr.ENGINES, help="use speech recognition instead of OCR (Mandarin audio)")
+    ap.add_argument("--asr", choices=asr.ENGINES + (asr.MERGE,),
+                    help="use speech recognition instead of OCR (Mandarin audio); merge = both engines")
+    ap.add_argument("--whisper-hints", action="store_true",
+                    help="with --asr: give Whisper the glossary names too (runs Whisper a second time)")
     ap.add_argument("--redo", choices=["region", "ocr", "asr", "translate"], help="ignore cached results from this stage on")
     a = ap.parse_args()
 
@@ -49,7 +53,16 @@ def main():
     a.out.mkdir(parents=True, exist_ok=True)
     if a.asr:
         cues, _info = asr.transcribe(video, work, a.asr, a.start, a.duration, redo <= 1)
-        finish(a, cues, work, title, f"{name}.asr-{a.asr}", "asr", f"translate_asr-{a.asr}", redo)
+        if a.glossary:
+            glossary = a.glossary.read_text()
+        else:
+            desc = fetch.description(a.src, ROOT / "work" / fetch.slug_for(a.src))
+            glossary = translate.auto_glossary(cues, title, desc, work / "glossary.auto.txt", a.model, redo <= 1)
+            print("  Glossary (" + str(work / "glossary.auto.txt") + "):\n    " + glossary.strip().replace("\n", "\n    "))
+        if a.whisper_hints and a.asr != "sensevoice":
+            cues, _info = asr.transcribe(video, work, a.asr, a.start, a.duration, redo <= 1, asr.hint_words(glossary))
+        finish(a, cues, work, title, f"{name}.asr-{a.asr}", "merge" if a.asr == asr.MERGE else "asr",
+               f"translate_asr-{a.asr}", redo, glossary)
         return
 
     # 1. caption band
@@ -82,10 +95,12 @@ def main():
 
     # 3. cues
     cues = cuesmod.build(frames, a.fps, a.sim)
-    finish(a, cues, work, title, name, "ocr", "translate", redo)
+    glossary_file = a.glossary or ROOT / "glossary.txt"
+    glossary = glossary_file.read_text() if glossary_file.exists() else ""
+    finish(a, cues, work, title, name, "ocr", "translate", redo, glossary)
 
 
-def finish(a, cues, work, title, name, source, cache_name, redo):
+def finish(a, cues, work, title, name, source, cache_name, redo, glossary):
     """Write the Chinese .srt, then translate and write the English ones."""
     zh_path = a.out / f"{name}.zh.srt"
     cuesmod.write_srt(cues, zh_path, "zh")
@@ -97,10 +112,13 @@ def finish(a, cues, work, title, name, source, cache_name, redo):
     if redo <= 2:
         for f in (work / cache_name).glob("*.json"):
             f.unlink()
-    glossary = a.glossary.read_text() if a.glossary.exists() else ""
     cues = translate.translate(cues, work, glossary, title, a.model, source=source, cache_name=cache_name)
     (work / ("cues.json" if source == "ocr" else f"cues_{cache_name}.json")).write_text(json.dumps(cues, ensure_ascii=False, indent=1))
     cues = cuesmod.polish(cues)
+    if source != "ocr":
+        fixed = a.out / f"{name}.fixed.zh.srt"
+        cuesmod.write_srt(cues, fixed, "zh")
+        print(f"  corrected Chinese → {fixed}")
     en_path = a.out / f"{name}.en.srt"
     cuesmod.write_srt(cues, en_path, "en", a.speakers)
     print(f"Done → {en_path}")
