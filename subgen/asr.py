@@ -2,14 +2,16 @@
 import json
 import re
 import subprocess
-import sys
 import time
 from pathlib import Path
+
+from . import events
 
 ENGINES = ("sensevoice", "whisper")
 MERGE = "merge"  # whisper timing + sensevoice as a second opinion, reconciled by the translator
 WHISPER_REPO = "mlx-community/whisper-large-v3-turbo"
 RATE = 16000
+CHUNK = 300  # seconds of audio per resumable piece
 MAX_CHARS = 20
 # Whisper's favourite hallucinations on music/silence (subtitle credits, "subscribe", etc.).
 JUNK = re.compile(r"字幕|订阅|点赞|转发|打赏|明镜|栏目|谢谢观看|感谢观看|请不吝")
@@ -30,14 +32,16 @@ def simplified(text: str) -> str:
 
 
 def extract_audio(video: Path, out: Path, start: float = 0, duration: float | None = None):
+    tmp = out.with_suffix(".part.wav")  # renamed when complete, so a killed run never leaves half a file
     cmd = ["ffmpeg", "-v", "error", "-y"]
     if start:
         cmd += ["-ss", str(start)]
     cmd += ["-i", str(video)]
     if duration:
         cmd += ["-t", str(duration)]
-    cmd += ["-vn", "-ac", "1", "-ar", str(RATE), str(out)]
+    cmd += ["-vn", "-ac", "1", "-ar", str(RATE), str(tmp)]
     subprocess.run(cmd, check=True)
+    tmp.rename(out)
 
 
 def hint_words(glossary: str) -> list[str]:
@@ -45,37 +49,60 @@ def hint_words(glossary: str) -> list[str]:
     return [l.split("=")[0].strip() for l in glossary.splitlines() if "=" in l]
 
 
-def sensevoice(wav: Path, hints: list[str]) -> list[dict]:
-    """fsmn-vad finds speech segments, SenseVoiceSmall transcribes each one (it takes no hint words)."""
-    import soundfile as sf
-    from funasr import AutoModel
+_models = {}
 
-    audio, _sr = sf.read(str(wav), dtype="float32")
-    vad = AutoModel(model="fsmn-vad", max_single_segment_time=15000, disable_update=True, disable_pbar=True)
-    spans = vad.generate(input=str(wav))[0]["value"]  # [[start_ms, end_ms], ...]
-    asr = AutoModel(model="iic/SenseVoiceSmall", disable_update=True, disable_pbar=True)
+
+def model(name: str):
+    """A FunASR model, loaded once per run."""
+    if name not in _models:
+        from funasr import AutoModel
+        kw = {"max_single_segment_time": 15000} if name == "fsmn-vad" else {}
+        _models[name] = AutoModel(model=name, disable_update=True, disable_pbar=True, **kw)
+    return _models[name]
+
+
+def speech_spans(wav: Path, work: Path) -> list[list[float]]:
+    """Speech segments as [start, end] seconds, found by fsmn-vad (cached in vad.json)."""
+    cache = work / "vad.json"
+    if cache.exists():
+        return json.loads(cache.read_text())
+    spans = [[s / 1000, e / 1000] for s, e in model("fsmn-vad").generate(input=str(wav))[0]["value"]]
+    cache.write_text(json.dumps(spans))
+    return spans
+
+
+def chunks(spans: list[list[float]], total: float) -> list[tuple[float, float]]:
+    """Split 0..total into pieces of about CHUNK seconds, cut in the silence nearest each mark."""
+    gaps = [(x[1] + y[0]) / 2 for x, y in zip(spans, spans[1:])]
+    cuts = [0.0]
+    k = 1
+    while k * CHUNK < total - CHUNK / 2:
+        cut = min(gaps, key=lambda g: abs(g - k * CHUNK), default=k * CHUNK)
+        cuts.append(cut if abs(cut - k * CHUNK) < 60 and cut > cuts[-1] else k * CHUNK)
+        k += 1
+    return list(zip(cuts, cuts[1:] + [total]))
+
+
+def sensevoice(audio, spans: list[list[float]], tick) -> list[dict]:
+    """SenseVoiceSmall on each speech span (it takes no hint words)."""
+    m = model("iic/SenseVoiceSmall")
     segs = []
-    for i, (s, e) in enumerate(spans):
-        chunk = audio[int(s * RATE / 1000):int(e * RATE / 1000)]
-        res = asr.generate(input=chunk, language="zh", use_itn=True, batch_size_s=60)
-        text = res[0]["text"] if res else ""
-        segs.append({"start": s / 1000, "end": e / 1000, "zh": text})
-        sys.stdout.write(f"\r  SenseVoice {i + 1}/{len(spans)} segments")
-        sys.stdout.flush()
-    print()
+    for s, e in spans:
+        res = m.generate(input=audio[int(s * RATE):int(e * RATE)], language="zh", use_itn=True, batch_size_s=60)
+        segs.append({"start": s, "end": e, "zh": res[0]["text"] if res else ""})
+        tick(e)
     return segs
 
 
-def whisper(wav: Path, hints: list[str]) -> list[dict]:
+def whisper(audio, a: float, b: float, hints: list[str]) -> list[dict]:
     import mlx_whisper
 
     prompt = "以下是普通话综艺节目的对话。"
     if hints:  # names in the prompt bias Whisper towards spelling them right
         prompt += "人物和地点：" + "、".join(hints) + "。"
     res = mlx_whisper.transcribe(
-        str(wav), path_or_hf_repo=WHISPER_REPO, language="zh", task="transcribe",
-        condition_on_previous_text=False, initial_prompt=prompt,
-        verbose=False,
+        audio[int(a * RATE):int(b * RATE)], path_or_hf_repo=WHISPER_REPO, language="zh", task="transcribe",
+        condition_on_previous_text=False, initial_prompt=prompt, verbose=None,
     )
     segs = []
     for s in res["segments"]:
@@ -83,34 +110,74 @@ def whisper(wav: Path, hints: list[str]) -> list[dict]:
             continue
         if s["compression_ratio"] > 2.4:  # looping repetition
             continue
-        segs.append({"start": s["start"], "end": s["end"], "zh": s["text"]})
+        segs.append({"start": s["start"] + a, "end": s["end"] + a, "zh": s["text"]})
     return segs
 
 
 def transcribe(video: Path, work: Path, engine: str, start: float = 0, duration: float | None = None,
                redo: bool = False, hints: list[str] = ()) -> tuple[list[dict], dict]:
-    """Return (cues, info). Raw segments and wall time are cached in work/asr_<engine>[_hints].json."""
+    """Return (cues, info). Raw segments and wall time are cached in work/asr_<engine>[_hints].json,
+    built from per-chunk results in work/asr_<engine>[_hints]/ so an interrupted run can resume."""
     if engine == MERGE:
         return merge(video, work, start, duration, redo, hints)
     hints = list(hints) if engine == "whisper" else []
     cache = work / f"asr_{engine}{'_hints' if hints else ''}.json"
     data = json.loads(cache.read_text()) if cache.exists() and not redo else None
     if not data or data.get("hints", []) != hints:  # cached run used other hint words
-        wav = work / "audio.wav"
-        if not wav.exists():
-            extract_audio(video, wav, start, duration)
-        print(f"  Speech recognition ({engine})…")
-        t0 = time.time()
-        segs = {"sensevoice": sensevoice, "whisper": whisper}[engine](wav, hints)
-        for s in segs:
-            s["start"], s["end"] = round(s["start"] + start, 3), round(s["end"] + start, 3)
-        import soundfile as sf
-        data = {"engine": engine, "seconds": round(time.time() - t0, 1),
-                "audio_seconds": round(sf.info(str(wav)).duration, 1), "hints": hints, "segments": segs}
+        data = run_engine(video, work, engine, start, duration, redo, hints)
         cache.write_text(json.dumps(data, ensure_ascii=False, indent=1))
     info = {k: v for k, v in data.items() if k != "segments"}
     print(f"  {engine}: {info['audio_seconds'] / 60:.1f} min of audio in {info['seconds'] / 60:.1f} min")
     return to_cues(data["segments"]), info
+
+
+def run_engine(video, work, engine, start, duration, redo, hints) -> dict:
+    import soundfile as sf
+
+    wav = work / "audio.wav"
+    if not wav.exists():
+        with events.stage("audio"):
+            extract_audio(video, wav, start, duration)
+    cdir = work / f"asr_{engine}{'_hints' if hints else ''}"
+    cdir.mkdir(exist_ok=True)
+    if redo:
+        (work / "vad.json").unlink(missing_ok=True)
+        for f in cdir.glob("*.json"):
+            f.unlink()
+    print(f"  Speech recognition ({engine})…")
+    audio, _sr = sf.read(str(wav), dtype="float32")
+    total = len(audio) / RATE
+    label = {"whisper": "Whisper", "sensevoice": "SenseVoice"}[engine]
+
+    def tick(pos):
+        events.progress(engine, pos, total, f"{label} {pos / 60:.1f}/{total / 60:.1f} min")
+
+    segs, seconds = [], 0.0
+    with events.stage(engine):
+        spans = speech_spans(wav, work)
+        for i, (a, b) in enumerate(chunks(spans, total)):
+            f = cdir / f"{i:03d}.json"
+            d = json.loads(f.read_text()) if f.exists() else None
+            if not d or d["range"] != [a, b] or d["hints"] != hints:
+                tick(a)
+                t0 = time.time()
+                inner = [sp for sp in spans if a <= sp[0] < b]
+                if not inner:  # no speech: skip, Whisper would only hallucinate
+                    got = []
+                elif engine == "whisper":
+                    got = whisper(audio, a, b, hints)
+                else:
+                    got = sensevoice(audio, inner, tick)
+                d = {"range": [a, b], "hints": hints, "seconds": round(time.time() - t0, 1), "segments": got}
+                f.write_text(json.dumps(d, ensure_ascii=False))
+            segs += d["segments"]
+            seconds += d["seconds"]
+            tick(b)
+    print()
+    for s in segs:
+        s["start"], s["end"] = round(s["start"] + start, 3), round(s["end"] + start, 3)
+    return {"engine": engine, "seconds": round(seconds, 1), "audio_seconds": round(total, 1),
+            "hints": hints, "segments": segs}
 
 
 def merge(video, work, start, duration, redo, hints) -> tuple[list[dict], dict]:

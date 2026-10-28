@@ -2,10 +2,11 @@
 import json
 import shutil
 import subprocess
-import sys
 import tempfile
 from concurrent.futures import ThreadPoolExecutor
 from pathlib import Path
+
+from . import events
 
 SYSTEM = "You are a professional Chinese-to-English subtitle translator. You output only the requested lines."
 
@@ -125,14 +126,18 @@ def translate_batch(batch: list[dict], context: list[dict], glossary: str, title
             lines="\n".join(f"{c['id']}\t{c['zh']}" + (f"\t{c.get('alt', '')}" if source == "merge" else "")
                             for c in todo),
         )
-        got.update(parse(call_claude(prompt, model), {c["id"] for c in todo}))
+        try:
+            got.update(parse(call_claude(prompt, model), {c["id"] for c in todo}))
+        except (RuntimeError, subprocess.TimeoutExpired) as e:  # e.g. a request cut off by a long pause
+            events.warn(f"translation request failed, retrying: {str(e)[:200]}")
         todo = [c for c in batch if c["id"] not in got]
         if not todo:
             break
     missing = want - got.keys()
-    if missing:
-        print(f"\n  warning: {len(missing)} lines untranslated (ids {sorted(missing)[:10]}…)", file=sys.stderr)
-    cache.write_text(json.dumps(got, ensure_ascii=False))
+    if missing:  # not cached, so the next run asks again
+        events.warn(f"{len(missing)} lines untranslated (ids {sorted(missing)[:10]}…)")
+    else:
+        cache.write_text(json.dumps(got, ensure_ascii=False))
     return got
 
 
@@ -153,8 +158,7 @@ def translate(cues: list[dict], workdir: Path, glossary: str, title: str, model:
         results = {}
         for n, j in enumerate(jobs, 1):
             results.update(j.result())
-            sys.stdout.write(f"\r  Translating… batch {n}/{len(batches)}")
-            sys.stdout.flush()
+            events.progress("translate", n, len(batches), f"Translating… batch {n}/{len(batches)}")
     print()
     for c in cues:
         field, en = results.get(c["id"], ("", ""))

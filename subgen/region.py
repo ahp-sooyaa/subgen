@@ -1,10 +1,10 @@
 """Find the caption band automatically and the watermark zones inside it."""
-import sys
 from pathlib import Path
 
 import cv2
 import numpy as np
 
+from . import events
 from .ocr import Box, plausible, vision_ocr
 
 
@@ -35,8 +35,7 @@ def detect(video: Path, width: int, height: int, start: float, end: float, n: in
                 b.text = t
                 boxes.append(b)
         samples.append(boxes)
-        sys.stdout.write(f"\r  Finding caption area… {i + 1}/{n}")
-        sys.stdout.flush()
+        events.progress("region", i + 1, n, f"Finding caption area… {i + 1}/{n}")
     print()
 
     def near(a: Box, b: Box):
