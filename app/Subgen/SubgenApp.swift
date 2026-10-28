@@ -11,14 +11,7 @@ struct SubgenApp: App {
                 .environmentObject(store)
                 .onAppear { delegate.store = store }
         }
-        .defaultSize(width: 980, height: 640)
-
-        WindowGroup("Subtitles", id: "viewer", for: UUID.self) { $id in
-            if let id {
-                ViewerView(jobID: id).environmentObject(store)
-            }
-        }
-        .defaultSize(width: 1200, height: 720)
+        .defaultSize(width: 1180, height: 720)
 
         Settings { SettingsView() }
     }

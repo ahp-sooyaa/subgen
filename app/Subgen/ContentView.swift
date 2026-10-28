@@ -4,9 +4,13 @@ struct ContentView: View {
     @EnvironmentObject private var store: JobStore
     @State private var selection: UUID?
     @State private var showNew = false
+    /// Job whose subtitles are open in the viewer, which then takes the place of the job detail.
+    @State private var viewing: UUID?
+    @State private var leaveRequested = false
+    @State private var columns: NavigationSplitViewVisibility = .all
 
     var body: some View {
-        NavigationSplitView {
+        NavigationSplitView(columnVisibility: $columns) {
             List(selection: $selection) {
                 ForEach(store.jobs) { job in
                     JobRow(job: job, progress: store.progress[job.id]).tag(job.id)
@@ -23,10 +27,33 @@ struct ContentView: View {
                 }
             }
         } detail: {
-            if let id = selection, let job = store.job(id) {
-                JobDetailView(job: job)
+            if let id = viewing {
+                ViewerScreen(jobID: id, leaveRequested: $leaveRequested) { left in
+                    leaveRequested = false
+                    if left {
+                        viewing = nil
+                        withAnimation { columns = .all }
+                    } else {
+                        selection = id  // stay: undo the click on another job
+                    }
+                }
+                .id(id)
+            } else if let id = selection, let job = store.job(id) {
+                JobDetailView(job: job) {
+                    viewing = id
+                    withAnimation { columns = .detailOnly }
+                }
             } else {
                 Text("Select a job").foregroundStyle(.secondary)
+            }
+        }
+        .onChange(of: selection) { _, new in
+            if let v = viewing, new != v { leaveRequested = true }
+        }
+        .onChange(of: store.jobs) { _, jobs in
+            if let v = viewing, !jobs.contains(where: { $0.id == v }) {
+                viewing = nil
+                columns = .all
             }
         }
         .sheet(isPresented: $showNew) {

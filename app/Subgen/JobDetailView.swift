@@ -2,8 +2,8 @@ import SwiftUI
 
 struct JobDetailView: View {
     let job: Job
+    var onOpenViewer: () -> Void
     @EnvironmentObject private var store: JobStore
-    @Environment(\.openWindow) private var openWindow
     @State private var showLog = false
     @State private var showGlossary = false
     @State private var confirmRemove = false
@@ -115,7 +115,7 @@ struct JobDetailView: View {
                 HStack {
                     Text("Subtitles").font(.headline)
                     Spacer()
-                    Button { openWindow(id: "viewer", value: job.id) } label: {
+                    Button(action: onOpenViewer) {
                         Label("Open Viewer", systemImage: "play.rectangle")
                     }
                     .disabled(progress.videoPath == nil || progress.outputs["en"] == nil)
