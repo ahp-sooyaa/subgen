@@ -15,6 +15,7 @@ targets:
         GENERATE_INFOPLIST_FILE: YES
         INFOPLIST_KEY_CFBundleDisplayName: Subgen
         INFOPLIST_KEY_LSApplicationCategoryType: public.app-category.video
+        ASSETCATALOG_COMPILER_APPICON_NAME: AppIcon
         MARKETING_VERSION: "0.1"
         CURRENT_PROJECT_VERSION: "1"
         SWIFT_VERSION: "5.0"
@@ -23,3 +24,16 @@ targets:
         ENABLE_HARDENED_RUNTIME: NO
         CODE_SIGN_IDENTITY: "-"
         CODE_SIGN_STYLE: Manual
+        # The install phase below writes to /Applications.
+        ENABLE_USER_SCRIPT_SANDBOXING: NO
+    postBuildScripts:
+      - name: Install to /Applications
+        basedOnDependencyAnalysis: false
+        script: |
+          # Release builds replace /Applications/Subgen.app; Debug builds stay in DerivedData.
+          [ "$CONFIGURATION" = "Release" ] || exit 0
+          rm -rf "/Applications/$FULL_PRODUCT_NAME"
+          ditto "$CODESIGNING_FOLDER_PATH" "/Applications/$FULL_PRODUCT_NAME"
+          # Script phases run before Xcode signs the bundle, so sign the copy ad hoc here.
+          codesign --force --sign - "/Applications/$FULL_PRODUCT_NAME"
+          echo "Installed /Applications/$FULL_PRODUCT_NAME"
