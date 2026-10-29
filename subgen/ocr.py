@@ -2,7 +2,6 @@
 import json
 import re
 import subprocess
-import sys
 import time
 from dataclasses import dataclass
 from pathlib import Path
@@ -10,6 +9,8 @@ from pathlib import Path
 import cv2
 import numpy as np
 from PIL import Image
+
+from . import events
 
 CJK = re.compile(r"[㐀-鿿]")
 # Characters we keep from OCR output; everything else is banner decoration noise.
@@ -141,14 +142,34 @@ def iter_frames(video: Path, fps: float, crop: tuple[int, int, int, int], start:
 
 
 def ocr_video(video: Path, out: Path, fps: float, crop, zones, blacklist, change_thresh: float,
-              total: float, start: float = 0, duration: float | None = None):
-    """OCR every sampled frame of the band; writes JSONL of {t, text}."""
+              total: float, start: float = 0, duration: float | None = None, params: dict | None = None):
+    """OCR every sampled frame of the band; writes JSONL of {t, text}.
+
+    `params` identify the run: if an interrupted run with the same params left a partial
+    `out`, it continues after its last frame instead of starting over.
+    """
+    running = out.with_name("ocr_running.json")
     prev_mask, prev_text = None, ""
     n = n_ocr = 0
     t0 = time.time()
     span = duration or (total - start)
-    with out.open("w") as f:
-        for t, img in iter_frames(video, fps, crop, start, duration):
+    begin, mode = start, "w"
+    if params is not None and out.exists() and running.exists() and json.loads(running.read_text()) == params:
+        rows = []
+        for line in out.read_text().splitlines():
+            try:
+                rows.append(json.loads(line))
+            except json.JSONDecodeError:  # half-written last line
+                break
+        if rows:
+            out.write_text("".join(json.dumps(r, ensure_ascii=False) + "\n" for r in rows))
+            begin, prev_text, n, mode = rows[-1]["t"] + 1 / fps, rows[-1]["text"], len(rows), "a"
+            print(f"  Resuming OCR at {begin / 60:.1f} min")
+    if params is not None:
+        running.write_text(json.dumps(params))
+    rest = duration - (begin - start) if duration else None
+    with out.open(mode) as f:
+        for t, img in iter_frames(video, fps, crop, begin, rest):
             mask = text_mask(img)
             if changed(prev_mask, mask, change_thresh):
                 prev_text = read_band(img, blacklist, zones)
@@ -156,11 +177,10 @@ def ocr_video(video: Path, out: Path, fps: float, crop, zones, blacklist, change
                 n_ocr += 1
             f.write(json.dumps({"t": round(t, 3), "text": prev_text}, ensure_ascii=False) + "\n")
             n += 1
-            if n % 200 == 0:
-                done = (t - start) / span
-                eta = (time.time() - t0) / max(done, 1e-6) * (1 - done)
-                sys.stdout.write(f"\r  OCR {done:5.1%}  ({n_ocr}/{n} frames read)  ETA {eta/60:4.1f} min ")
-                sys.stdout.flush()
+            if n % 20 == 0:
+                f.flush()
+                events.progress("ocr", t - start, span,
+                                f"OCR {(t - start) / span:5.1%}  ({n_ocr} frames read this run)")
     if n == 0:
         out.unlink()
         raise SystemExit("ffmpeg returned no frames; check the video file and the --region values.")

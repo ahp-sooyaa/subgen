@@ -4,6 +4,8 @@ import re
 import subprocess
 from pathlib import Path
 
+from . import events
+
 
 def is_url(src: str) -> bool:
     return src.startswith(("http://", "https://"))
@@ -26,10 +28,15 @@ def fetch(src: str, workdir: Path) -> tuple[Path, str]:
 
     video = workdir / "video.mp4"
     meta = workdir / "meta.json"
-    if video.exists() and meta.exists():
-        return video, json.loads(meta.read_text())["title"]
-
     import yt_dlp
+
+    if video.exists() and meta.exists():
+        m = json.loads(meta.read_text())
+        if "description" not in m:  # cached before descriptions were kept
+            with yt_dlp.YoutubeDL({"quiet": True, "noplaylist": True}) as ydl:
+                m["description"] = ydl.extract_info(src, download=False).get("description", "")
+            meta.write_text(json.dumps(m, ensure_ascii=False))
+        return video, m["title"]
 
     opts = {
         "noplaylist": True,
@@ -38,12 +45,27 @@ def fetch(src: str, workdir: Path) -> tuple[Path, str]:
         "outtmpl": str(workdir / "video.%(ext)s"),
         "quiet": True,
         "noprogress": True,
+        "progress_hooks": [_download_progress],
     }
     print("Downloading video (720p)…")
     with yt_dlp.YoutubeDL(opts) as ydl:
         info = ydl.extract_info(src, download=True)
-    meta.write_text(json.dumps({"title": info.get("title", ""), "id": info.get("id")}, ensure_ascii=False))
+    meta.write_text(json.dumps({"title": info.get("title", ""), "id": info.get("id"),
+                                "description": info.get("description", "")}, ensure_ascii=False))
     return video, info.get("title", "")
+
+
+def _download_progress(d: dict):
+    if d.get("status") == "downloading":
+        total = d.get("total_bytes") or d.get("total_bytes_estimate") or 0
+        got = d.get("downloaded_bytes", 0)
+        events.progress("download", got, total, f"Downloading… {got / 1e6:.0f}/{total / 1e6:.0f} MB")
+
+
+def description(src: str, workdir: Path) -> str:
+    """The YouTube description saved by fetch() ('' for local files)."""
+    meta = workdir / "meta.json"
+    return json.loads(meta.read_text()).get("description", "") if is_url(src) and meta.exists() else ""
 
 
 def probe(video: Path) -> tuple[int, int, float]:

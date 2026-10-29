@@ -13,8 +13,12 @@ dependencies = [
     "srt",
 ]
 
+[project.optional-dependencies]
+asr = ["funasr", "torch", "torchaudio", "mlx-whisper", "opencc-python-reimplemented", "soundfile"]
+
 [project.scripts]
 subgen = "subgen.cli:main"
+subgen-compare = "subgen.compare:main"
 
 [build-system]
 requires = ["setuptools>=68"]

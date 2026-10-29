@@ -30,3 +30,31 @@ Useful options:
 5. Cues are translated in batches of 80 with `claude -p` (three batches at a time). Ads and OCR garbage come back as `[DROP]` and are removed.
 
 Requires `ffmpeg` (Homebrew) and the `claude` CLI logged in.
+
+## Speech recognition (experimental, Mandarin only)
+For videos without burned-in captions, or to compare against OCR. Install the extra once:
+```
+~/Personal/subgen/.venv/bin/pip install -e '.[asr]'
+```
+- `--asr whisper` (mlx-whisper large-v3-turbo) or `--asr sensevoice` (FunASR SenseVoiceSmall) uses the
+  audio instead of OCR. `--asr merge` runs both and lets Claude reconcile them (most accurate).
+  Outputs `<name>.asr-<engine>.zh.srt` (raw), `.fixed.zh.srt` (corrected by Claude) and `.en.srt`.
+  Models download on first use.
+- The name glossary is built automatically from the title, YouTube description and a first-pass transcript
+  (saved as `work/<id>/glossary.auto.txt`; edit it and re-run with `--redo translate`, or pass `--glossary`).
+- `--whisper-hints`: also give Whisper the glossary names (a second Whisper pass; small gain).
+- `subgen-compare <video> --ref <ocr .zh.srt> [--start --duration]` runs both engines and scores them
+  against the OCR captions: character error rate, timing, and speed. Writes `work/<id>/compare.md`.
+
+## Mac app
+`app/` is a SwiftUI front end for the same pipeline: a job queue, live progress per stage with ETA,
+pause / continue / stop, resume after stopping or quitting (finished chunks come from the cache), a
+glossary editor with "Save & Re-translate", and a viewer that plays the video with the subtitles and
+lets you fix English lines. It runs `.venv/bin/subgen --events …`, so the CLI setup above is required.
+```
+cd ~/Personal/subgen/app && xcodegen generate && xcodebuild -scheme Subgen -configuration Release -derivedDataPath build.noindex build
+open /Applications/Subgen.app
+```
+A Release build installs itself to `/Applications/Subgen.app`, replacing any previous copy; quit the
+app before rebuilding.
+Settings (⌘,) set the subgen folder, output folder and Claude model.
