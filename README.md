@@ -52,7 +52,7 @@ pause / continue / stop, resume after stopping or quitting (finished chunks come
 glossary editor with "Save & Re-translate", and a viewer that plays the video with the subtitles and
 lets you fix English lines. It runs `.venv/bin/subgen --events …`, so the CLI setup above is required.
 ```
-cd ~/Personal/subgen/app && xcodegen generate && xcodebuild -scheme Subgen -configuration Release -derivedDataPath build build
+cd ~/Personal/subgen/app && xcodegen generate && xcodebuild -scheme Subgen -configuration Release -derivedDataPath build.noindex build
 open /Applications/Subgen.app
 ```
 A Release build installs itself to `/Applications/Subgen.app`, replacing any previous copy; quit the

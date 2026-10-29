@@ -4,4 +4,4 @@ out/
 __pycache__/
 *.egg-info/
 app/*.xcodeproj/
-app/build/
+app/build.noindex/
