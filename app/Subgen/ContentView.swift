@@ -72,7 +72,8 @@ struct ContentView: View {
 
 /// Moves the close/minimise/zoom buttons down so they sit centred in the app's 52 pt header bars.
 /// The title bar is hidden, so macOS would otherwise put them in its 28 pt strip at the top. AppKit
-/// lays them out again on resize and full screen, so they are moved back after each of those.
+/// lays them out again on resize, full screen and appearance changes, so they are moved back
+/// whenever the buttons or the title bar move.
 @MainActor
 final class TrafficLights {
     static let shared = TrafficLights()
@@ -91,6 +92,17 @@ final class TrafficLights {
                 MainActor.assumeIsolated { self.place() }
             }
         }
+        // Any other relayout, e.g. switching light/dark while another window is in front.
+        if let close = window.standardWindowButton(.closeButton) {
+            for view in [close, close.superview?.superview].compactMap({ $0 }) {
+                view.postsFrameChangedNotifications = true
+                observers.append(NotificationCenter.default.addObserver(
+                    forName: NSView.frameDidChangeNotification, object: view, queue: .main) { _ in
+                    // After AppKit finishes its own layout pass.
+                    DispatchQueue.main.async { MainActor.assumeIsolated { self.place() } }
+                })
+            }
+        }
         place()
     }
 
@@ -99,14 +111,16 @@ final class TrafficLights {
               let close = window.standardWindowButton(.closeButton),
               let container = close.superview?.superview else { return }
         // The title bar's container clips the buttons, so it grows to the header's height first.
+        // Frames are only set when they differ, so the frame-change observers don't loop.
         var frame = container.frame
         frame.size.height = Self.header
         frame.origin.y = window.frame.height - Self.header
-        container.frame = frame
-        close.superview?.frame = container.bounds
+        if container.frame != frame { container.frame = frame }
+        if let bar = close.superview, bar.frame != container.bounds { bar.frame = container.bounds }
         for kind in [NSWindow.ButtonType.closeButton, .miniaturizeButton, .zoomButton] {
             guard let button = window.standardWindowButton(kind) else { continue }
-            button.setFrameOrigin(NSPoint(x: button.frame.minX, y: (Self.header - button.frame.height) / 2))
+            let origin = NSPoint(x: button.frame.minX, y: (Self.header - button.frame.height) / 2)
+            if button.frame.origin != origin { button.setFrameOrigin(origin) }
         }
     }
 }
@@ -200,14 +214,14 @@ struct JobRow: View {
 
     var body: some View {
         HStack(alignment: .top, spacing: 10) {
-            StatusGlyph(status: job.status, onDark: selected).padding(.top, 1)
+            StatusGlyph(status: job.status, onSelection: selected).padding(.top, 1)
             VStack(alignment: .leading, spacing: 3) {
                 Text(job.displayName)
                     .font(.system(size: 13, weight: .medium))
                     .lineLimit(1).truncationMode(.tail)
                 Text(meta)
                     .font(.system(size: 11.5))
-                    .foregroundStyle(selected ? Color(hex: 0xC9C2B4) : Theme.ink2)
+                    .foregroundStyle(selected ? Theme.paperSub : Theme.ink2)
                     .lineLimit(1)
                 if active, let p = progress {
                     Bar(value: p.overall(job.mode), height: 3,

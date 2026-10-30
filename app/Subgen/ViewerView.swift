@@ -257,7 +257,7 @@ struct ViewerContent: View {
             SegmentedPicker(selection: $language)
             Toggle("Follow video", isOn: $follow)
                 .toggleStyle(.checkbox)
-                .tint(Theme.ink)
+                .tint(Theme.emphasis)
                 .font(.system(size: 12.5, weight: .medium))
                 .foregroundStyle(Theme.chipText)
                 .padding(.horizontal, 8)
@@ -321,7 +321,7 @@ struct ViewerContent: View {
                 Text("Click a time to play from there").font(.system(size: 12)).foregroundStyle(Theme.ink2)
             }
             .padding(.horizontal, 16).padding(.vertical, 12)
-            .overlay(alignment: .bottom) { Color(hex: 0xEEE8DC).frame(height: 1) }
+            .overlay(alignment: .bottom) { Theme.hairline.frame(height: 1) }
             if let err = model.saveError {
                 Notice(text: "Couldn't save: \(err)", systemImage: "exclamationmark.triangle", error: true)
                     .padding(8)
@@ -383,7 +383,7 @@ struct SegmentedPicker: View {
                         .padding(.horizontal, 12).frame(height: 26)
                         .background {
                             if on {
-                                RoundedRectangle(cornerRadius: 6).fill(.white)
+                                RoundedRectangle(cornerRadius: 6).fill(Theme.segmentOn)
                                     .shadow(color: .black.opacity(0.12), radius: 1, y: 1)
                             }
                         }
@@ -411,18 +411,18 @@ struct Transport: View {
                     .font(.system(size: 13))
                     .foregroundStyle(Theme.video)
                     .frame(width: 34, height: 34)
-                    .background(Theme.paper, in: Circle())
+                    .background(Theme.videoText, in: Circle())
             }
             .buttonStyle(.plain)
             .help(clock.playing ? "Pause" : "Play")
-            Text(formatDuration(scrub ?? clock.time)).font(Theme.mono(12)).foregroundStyle(Color(hex: 0xD9D3C7))
+            Text(formatDuration(scrub ?? clock.time)).font(Theme.mono(12)).foregroundStyle(Theme.videoMuted)
             GeometryReader { geo in
                 let w = geo.size.width
                 let frac = clock.duration > 0 ? min(max((scrub ?? clock.time) / clock.duration, 0), 1) : 0
                 ZStack(alignment: .leading) {
-                    Capsule().fill(Color(hex: 0x34353B)).frame(height: 4)
+                    Capsule().fill(Theme.videoTrack).frame(height: 4)
                     Capsule().fill(Theme.accent).frame(width: w * frac, height: 4)
-                    Circle().fill(Theme.paper).frame(width: 12, height: 12).offset(x: w * frac - 6)
+                    Circle().fill(Theme.videoText).frame(width: 12, height: 12).offset(x: w * frac - 6)
                 }
                 .frame(maxHeight: .infinity)
                 .contentShape(Rectangle())
@@ -434,7 +434,7 @@ struct Transport: View {
                     })
             }
             .frame(height: 18)
-            Text(formatDuration(clock.duration)).font(Theme.mono(12)).foregroundStyle(Color(hex: 0xD9D3C7))
+            Text(formatDuration(clock.duration)).font(Theme.mono(12)).foregroundStyle(Theme.videoMuted)
         }
         .padding(.horizontal, 18).padding(.top, 12).padding(.bottom, 14)
     }
@@ -481,7 +481,7 @@ struct CueRow: View {
         .padding(.horizontal, 10).padding(.vertical, 8)
         .background(isCurrent ? Theme.accentSoft : (edited ? Theme.card : .clear), in: RoundedRectangle(cornerRadius: 8))
         .overlay {
-            if edited { RoundedRectangle(cornerRadius: 8).strokeBorder(Theme.ink, lineWidth: 2) }
+            if edited { RoundedRectangle(cornerRadius: 8).strokeBorder(Theme.emphasis, lineWidth: 2) }
         }
     }
 }

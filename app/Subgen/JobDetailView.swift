@@ -325,7 +325,7 @@ struct StageRow: View {
             VStack(spacing: 0) {
                 marker
                 if !last {
-                    (done ? Theme.ink : Color(hex: 0xDDD5C6)).frame(width: 2).frame(minHeight: 14)
+                    (done ? Theme.ink : Theme.divider).frame(width: 2).frame(minHeight: 14)
                 }
             }
             .frame(width: 22)
@@ -361,14 +361,14 @@ struct StageRow: View {
             ZStack {
                 Circle().fill(Theme.accent)
                 if paused {
-                    Image(systemName: "pause.fill").font(.system(size: 9, weight: .bold))
+                    Image(systemName: "pause.fill").font(.system(size: 9, weight: .bold)).foregroundStyle(Theme.onAccent)
                 } else {
-                    Circle().fill(Theme.ink).frame(width: 8, height: 8)
+                    Circle().fill(Theme.onAccent).frame(width: 8, height: 8)
                 }
             }
             .frame(width: 22, height: 22)
         } else {
-            Circle().fill(Theme.bg).overlay(Circle().strokeBorder(Color(hex: 0xCFC6B5), lineWidth: 1.5))
+            Circle().fill(Theme.bg).overlay(Circle().strokeBorder(Theme.strongBorder, lineWidth: 1.5))
                 .frame(width: 22, height: 22)
         }
     }
@@ -503,8 +503,8 @@ struct GlossaryEditor: View {
                 .focused($focused)
                 .padding(.horizontal, 10).padding(.vertical, 10)
                 .frame(minHeight: 280, maxHeight: 400)
-                .background(Theme.card, in: RoundedRectangle(cornerRadius: 10))
-                .overlay(RoundedRectangle(cornerRadius: 10).strokeBorder(focused ? Theme.ink : Theme.border))
+                .background(Theme.field, in: RoundedRectangle(cornerRadius: 10))
+                .overlay(RoundedRectangle(cornerRadius: 10).strokeBorder(focused ? Theme.emphasis : Theme.border))
                 .focusGlow(focused, radius: 10)
             HStack(spacing: 8) {
                 Text(path.replacingOccurrences(of: NSHomeDirectory(), with: "~"))

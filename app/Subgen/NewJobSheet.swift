@@ -43,7 +43,7 @@ struct NewJobSheet: View {
                 .frame(maxWidth: .infinity).frame(height: 52)
                 .background(dropTargeted ? Theme.accentSoft : .clear, in: RoundedRectangle(cornerRadius: 10))
                 .overlay(RoundedRectangle(cornerRadius: 10)
-                    .strokeBorder(dropTargeted ? Theme.accent : Color(hex: 0xCFC6B5),
+                    .strokeBorder(dropTargeted ? Theme.accent : Theme.strongBorder,
                                   style: StrokeStyle(lineWidth: 1.5, dash: [5, 4])))
                 .onDrop(of: [.fileURL], isTargeted: $dropTargeted) { providers in
                     _ = providers.first?.loadObject(ofClass: URL.self) { url, _ in
@@ -151,8 +151,8 @@ private struct ModeCard: View {
             VStack(alignment: .leading, spacing: 6) {
                 HStack(spacing: 8) {
                     ZStack {
-                        Circle().strokeBorder(selected ? Theme.ink : Theme.border, lineWidth: selected ? 4.5 : 1)
-                            .background(Circle().fill(Theme.card))
+                        Circle().strokeBorder(selected ? Theme.emphasis : Theme.border, lineWidth: selected ? 4.5 : 1)
+                            .background(Circle().fill(Theme.field))
                     }
                     .frame(width: 15, height: 15)
                     Text(title).font(.system(size: 13, weight: .semibold))
@@ -163,9 +163,9 @@ private struct ModeCard: View {
             }
             .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .topLeading)
             .padding(12)
-            .background(selected ? Theme.card : Theme.tile, in: RoundedRectangle(cornerRadius: 10))
+            .background(selected ? Theme.tileOn : Theme.tile, in: RoundedRectangle(cornerRadius: 10))
             .overlay(RoundedRectangle(cornerRadius: 10)
-                .strokeBorder(selected ? Theme.ink : Theme.divider, lineWidth: selected ? 2 : 1))
+                .strokeBorder(selected ? Theme.emphasis : Theme.divider, lineWidth: selected ? 2 : 1))
             .contentShape(Rectangle())
         }
         .buttonStyle(.plain)
@@ -216,7 +216,7 @@ private struct SwitchRow: View {
                 .labelsHidden()
                 .toggleStyle(.switch)
                 .controlSize(.small)
-                .tint(Theme.ink)
+                .tint(Theme.emphasis)
         }
     }
 }
