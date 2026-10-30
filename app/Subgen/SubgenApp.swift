@@ -22,7 +22,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
     weak var store: JobStore?
 
     func applicationWillFinishLaunching(_ notification: Notification) {
-        NSApp.appearance = NSAppearance(named: .aqua)  // the design is light only
+        AppSettings.appearance.apply()
     }
 
     func applicationWillTerminate(_ notification: Notification) {

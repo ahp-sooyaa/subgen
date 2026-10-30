@@ -1,47 +1,77 @@
 import AVFoundation
 import SwiftUI
 
-/// The app's look: warm paper greys, near-black ink and one yellow accent. Light only.
+/// The app's look: warm paper greys with ink text in light, neutral graphite with paper text in
+/// dark, and one amber accent in both. Each colour follows the window's appearance.
 enum Theme {
-    static let bg = Color(hex: 0xFBF9F4)
-    static let sidebar = Color(hex: 0xF1ECE2)
-    static let card = Color.white
-    static let border = Color(hex: 0xD9D1C1)
-    static let divider = Color(hex: 0xE2DBCD)
-    static let hairline = Color(hex: 0xE8E2D6)
-    static let rowLine = Color(hex: 0xF1ECE2)
+    static let bg = Color(light: 0xFBF9F4, dark: 0x1C1D21)
+    static let sidebar = Color(light: 0xF1ECE2, dark: 0x24252A)
+    static let card = Color(light: 0xFFFFFF, dark: 0x26272C)
+    /// Secondary buttons; inputs.
+    static let control = Color(light: 0xFFFFFF, dark: 0x2E2F35)
+    static let field = Color(light: 0xFFFFFF, dark: 0x1C1D21)
+    static let border = Color(light: 0xD9D1C1, dark: 0x3D3E45)
+    static let strongBorder = Color(light: 0xCFC6B5, dark: 0x4A4B52)
+    static let divider = Color(light: 0xE2DBCD, dark: 0x34353B)
+    static let hairline = Color(light: 0xE8E2D6, dark: 0x2E2F35)
+    static let rowLine = Color(light: 0xF1ECE2, dark: 0x2E2F35)
 
-    static let ink = Color(hex: 0x1B1D22)
-    static let ink2 = Color(hex: 0x5E5A52)
-    static let ink3 = Color(hex: 0x6F695F)
-    static let paper = Color(hex: 0xF6F2EA)  // text on ink
+    static let ink = Color(light: 0x1B1D22, dark: 0xF1ECE2)
+    static let ink2 = Color(light: 0x5E5A52, dark: 0xA9A398)
+    static let ink3 = Color(light: 0x6F695F, dark: 0x8F897E)
+    /// Text on `ink`, e.g. the selected job.
+    static let paper = Color(light: 0xF6F2EA, dark: 0x1B1D22)
+    static let paperSub = Color(light: 0xC9C2B4, dark: 0x5E5A52)
+    /// Focus rings, switches and the chosen option: ink in light, amber in dark.
+    static let emphasis = Color(light: 0x1B1D22, dark: 0xF5B820)
 
     static let accent = Color(hex: 0xF5B820)
-    static let accentSoft = Color(hex: 0xFCEFC9)
-    static let accentText = Color(hex: 0x6B4A00)
-    static let link = Color(hex: 0x855B00)
-    static let track = Color(hex: 0xECE5D6)
-    static let chip = Color(hex: 0xEDE7DB)
-    static let chipText = Color(hex: 0x3E3B35)
-    static let segment = Color(hex: 0xE4DDCF)
-    static let tile = Color(hex: 0xF3EFE6)
+    static let onAccent = Color(hex: 0x1B1D22)
+    static let accentSoft = Color(light: 0xFCEFC9, dark: 0x3A3120)
+    static let accentText = Color(light: 0x6B4A00, dark: 0xF5C84A)
+    static let link = Color(light: 0x855B00, dark: 0xF5C84A)
+    static let track = Color(light: 0xECE5D6, dark: 0x34353B)
+    static let chip = Color(light: 0xEDE7DB, dark: 0x2F3036)
+    static let chipText = Color(light: 0x3E3B35, dark: 0xD6D0C4)
+    static let segment = Color(light: 0xE4DDCF, dark: 0x2F3036)
+    static let segmentOn = Color(light: 0xFFFFFF, dark: 0x4A4B52)
+    static let tile = Color(light: 0xF3EFE6, dark: 0x1C1D21)
+    static let tileOn = Color(light: 0xFFFFFF, dark: 0x2E2F35)
+    static let hover = Color(light: 0xF3EFE6, dark: 0x34353B)
 
-    static let green = Color(hex: 0x2F7D4F)
-    static let greenSoft = Color(hex: 0xDCEFE2)
-    static let greenText = Color(hex: 0x1F5A37)
-    static let red = Color(hex: 0xB3361F)
-    static let redSoft = Color(hex: 0xF7E0DA)
-    static let notice = Color(hex: 0xFBF0DA)
+    static let green = Color(light: 0x2F7D4F, dark: 0x3FA86A)
+    static let greenSoft = Color(light: 0xDCEFE2, dark: 0x1F3A2A)
+    static let greenText = Color(light: 0x1F5A37, dark: 0x8FD6A8)
+    static let red = Color(light: 0xB3361F, dark: 0xE5654A)
+    static let redSoft = Color(light: 0xF7E0DA, dark: 0x3D231E)
+    static let notice = Color(light: 0xFBF0DA, dark: 0x3A3120)
 
-    static let video = Color(hex: 0x0E0F12)
+    /// The video area is dark in both themes.
+    static let video = Color(light: 0x0E0F12, dark: 0x0B0C0E)
+    static let videoText = Color(hex: 0xF6F2EA)
+    static let videoMuted = Color(hex: 0xD9D3C7)
+    static let videoTrack = Color(hex: 0x34353B)
 
     static func mono(_ size: CGFloat) -> Font { .system(size: size, design: .monospaced) }
 }
 
 extension Color {
     init(hex: UInt32) {
-        self.init(red: Double(hex >> 16 & 0xFF) / 255, green: Double(hex >> 8 & 0xFF) / 255,
-                  blue: Double(hex & 0xFF) / 255)
+        self.init(nsColor: NSColor(hex: hex))
+    }
+
+    /// A colour that switches with the light or dark appearance it is drawn in.
+    init(light: UInt32, dark: UInt32) {
+        self.init(nsColor: NSColor(name: nil) { appearance in
+            NSColor(hex: appearance.bestMatch(from: [.aqua, .darkAqua]) == .darkAqua ? dark : light)
+        })
+    }
+}
+
+extension NSColor {
+    convenience init(hex: UInt32) {
+        self.init(srgbRed: CGFloat(hex >> 16 & 0xFF) / 255, green: CGFloat(hex >> 8 & 0xFF) / 255,
+                  blue: CGFloat(hex & 0xFF) / 255, alpha: 1)
     }
 }
 
@@ -67,7 +97,8 @@ struct SubgenButtonStyle: ButtonStyle {
             configuration.label
                 .font(.system(size: 13, weight: kind == .primary ? .semibold : .medium))
                 .labelStyle(TightLabelStyle())
-                .foregroundStyle(enabled ? Theme.ink : Theme.ink3)
+                .foregroundStyle(kind == .primary ? Theme.onAccent.opacity(enabled ? 1 : 0.5)
+                                                  : (enabled ? Theme.ink : Theme.ink3))
                 .padding(.horizontal, kind == .ghost ? 8 : (kind == .primary ? 16 : 12))
                 .frame(minWidth: kind == .ghost ? height + 2 : nil, minHeight: height)
                 .background(background, in: RoundedRectangle(cornerRadius: height > 30 ? 8 : 7))
@@ -85,7 +116,7 @@ struct SubgenButtonStyle: ButtonStyle {
         private var background: Color {
             switch kind {
             case .primary: enabled ? Theme.accent : Theme.accent.opacity(0.4)
-            case .secondary: enabled ? (hover ? Theme.tile : Theme.card) : .clear
+            case .secondary: enabled ? (hover ? Theme.hover : Theme.control) : .clear
             case .ghost: hover && enabled ? Theme.ink.opacity(0.07) : .clear
             }
         }
@@ -173,7 +204,7 @@ struct Bar: View {
 /// The job's status as a 16 pt glyph.
 struct StatusGlyph: View {
     let status: JobStatus
-    var onDark = false
+    var onSelection = false
     @State private var spin = false
 
     var body: some View {
@@ -182,14 +213,14 @@ struct StatusGlyph: View {
             case .done:
                 Image(systemName: "checkmark.circle.fill")
                     .symbolRenderingMode(.palette)
-                    .foregroundStyle(.white, Theme.green)
+                    .foregroundStyle(Theme.bg, Theme.green)
             case .failed:
                 Image(systemName: "exclamationmark.triangle.fill")
                     .symbolRenderingMode(.palette)
-                    .foregroundStyle(.white, Theme.red)
+                    .foregroundStyle(Theme.bg, Theme.red)
             case .running:
                 ZStack {
-                    Circle().stroke(onDark ? Theme.paper.opacity(0.3) : Theme.ink2.opacity(0.35), lineWidth: 2)
+                    Circle().stroke(onSelection ? Theme.paper.opacity(0.3) : Theme.ink2.opacity(0.35), lineWidth: 2)
                     Circle().trim(from: 0, to: 0.3)
                         .stroke(Theme.accent, style: StrokeStyle(lineWidth: 2.4, lineCap: .round))
                         .rotationEffect(.degrees(spin ? 360 : 0))
@@ -204,7 +235,7 @@ struct StatusGlyph: View {
             }
         }
         .font(.system(size: 15))
-        .foregroundStyle(onDark ? Theme.paper.opacity(0.8) : Theme.ink3)
+        .foregroundStyle(onSelection ? Theme.paper.opacity(0.8) : Theme.ink3)
         .frame(width: 16, height: 16)
     }
 }
@@ -230,9 +261,9 @@ struct BoxedField: View {
             .focused($focused)
             .padding(.horizontal, height > 30 ? 12 : 9)
             .frame(height: height)
-            .background(Theme.card, in: RoundedRectangle(cornerRadius: height > 30 ? 8 : 6))
+            .background(Theme.field, in: RoundedRectangle(cornerRadius: height > 30 ? 8 : 6))
             .overlay(RoundedRectangle(cornerRadius: height > 30 ? 8 : 6)
-                .strokeBorder(focused ? Theme.ink : Theme.border))
+                .strokeBorder(focused ? Theme.emphasis : Theme.border))
             .focusGlow(focused, radius: height > 30 ? 8 : 6)
     }
 }
@@ -268,6 +299,7 @@ struct VideoThumbnail: View {
         }
         .frame(width: 240, height: 135)
         .clipShape(RoundedRectangle(cornerRadius: 10))
+        .overlay(RoundedRectangle(cornerRadius: 10).strokeBorder(Theme.divider.opacity(0.6)))
         .task(id: path) { image = await Self.frame(path) }
     }
 
