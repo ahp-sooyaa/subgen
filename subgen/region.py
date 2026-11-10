@@ -41,11 +41,17 @@ def detect(video: Path, width: int, height: int, start: float, end: float, n: in
     def near(a: Box, b: Box):
         return a.text == b.text and abs(a.cx - b.cx) < 0.03 and abs(a.cy - b.cy) < 0.03
 
+    # Static: the same text at the same place in many samples (logo, watermark), or in
+    # a neighbouring sample. Samples are tens of seconds apart and a caption rarely
+    # lasts that long, but scene titles ("南非之旅 状况百出") stay up for minutes and
+    # change too often to reach the 20% bar.
     static, moving = [], []
     for si, boxes in enumerate(samples):
+        neighbours = [samples[j] for j in (si - 1, si + 1) if 0 <= j < len(samples)]
         for b in boxes:
             hits = sum(any(near(b, o) for o in other) for oj, other in enumerate(samples) if oj != si)
-            (static if hits >= 0.2 * len(samples) else moving).append(b)
+            lingers = any(near(b, o) for other in neighbours for o in other)
+            (static if hits >= 0.2 * len(samples) or lingers else moving).append(b)
 
     if not moving:
         raise SystemExit("No changing text found. Pass --region x,y,w,h manually (see --preview).")

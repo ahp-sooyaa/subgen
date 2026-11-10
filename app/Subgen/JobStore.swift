@@ -107,8 +107,11 @@ final class JobStore: ObservableObject {
     }
 
     /// Re-run only the translation (e.g. after editing the glossary).
-    func retranslate(_ id: UUID) {
-        update(id) { $0.nextRunExtra = ["--redo", "translate"] }
+    func retranslate(_ id: UUID) { redo(id, from: "translate") }
+
+    /// Run again, ignoring cached results from `stage` on ("region", "ocr", "asr" or "translate").
+    func redo(_ id: UUID, from stage: String) {
+        update(id) { $0.nextRunExtra = ["--redo", stage] }
         if runningID != id { resume(id) }
     }
 

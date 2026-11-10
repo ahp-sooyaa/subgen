@@ -70,8 +70,9 @@ struct JobDetailView: View {
                     Button { store.stop(job.id) } label: { Label("Don't Run", systemImage: "stop.fill") }
                 case .stopped, .failed:
                     Button { store.resume(job.id) } label: { Label("Resume", systemImage: "play.fill") }
+                    redoMenu
                 case .done:
-                    Button { store.resume(job.id) } label: { Label("Run Again", systemImage: "arrow.clockwise") }
+                    redoMenu
                 }
                 if glossaryPath != nil {
                     Button { showGlossary = true } label: { Label("Glossary…", systemImage: "book.closed") }
@@ -90,6 +91,25 @@ struct JobDetailView: View {
         .background(Theme.bg)
         .overlay(alignment: .bottom) { Theme.hairline.frame(height: 1) }
         .windowDraggable()
+    }
+
+    /// Run again from a chosen stage. A plain re-run would take every finished stage from the cache.
+    private var redoMenu: some View {
+        Menu {
+            if job.mode == .ocr {
+                Button("From Finding Caption Area") { store.redo(job.id, from: "region") }
+                Button("From Reading Captions (OCR)") { store.redo(job.id, from: "ocr") }
+            } else {
+                Button("From Speech Recognition") { store.redo(job.id, from: "asr") }
+            }
+            Button("Translation Only") { store.redo(job.id, from: "translate") }
+        } label: {
+            Label("Redo", systemImage: "arrow.clockwise")
+        }
+        .menuStyle(.button)
+        .menuIndicator(.visible)
+        .fixedSize()
+        .help("Run again from a stage, ignoring its cached results and everything after it")
     }
 
     // MARK: Header
