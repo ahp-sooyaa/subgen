@@ -31,23 +31,7 @@ and keeps OCR fast, but it looks soft when watching.
 
 **Setting.** "Download HD copy for watching", on by default (1080p files are roughly 2–3× larger).
 
-## Keyboard controls in the viewer
+## Line navigation keys in the viewer
 
-**Problem.** Space doesn't reliably play/pause, and arrows don't seek. The viewer has an
-`.onKeyPress(.space)` on the video pane (`app/Subgen/ViewerView.swift`), but it only fires while
-that pane has keyboard focus. Clicking the video goes through `onTapGesture`, which doesn't take
-focus, and the English text fields in the Lines list keep it once you've edited a line.
-
-**Plan.**
-
-| Key | Action |
-| --- | --- |
-| Space | Play / pause |
-| ← | Back 10 s |
-| → | Forward 10 s |
-
-- Handle the keys at the window level, so they work wherever focus is — except while a text field
-  is being edited, where Space and the arrows must keep typing and moving the cursor.
-- Clicking the video should give it focus (and end any text edit).
-- Clamp seeks to the start and end of the video.
-- Maybe later: ↑/↓ for previous/next line, and show the shortcuts in the transport bar's tooltips.
+Space and ← / → already play/pause and seek 10 s. Add ↑ / ↓ to jump to the previous / next
+subtitle line, with the same rule: ignored while a text field in the Lines list is being edited.

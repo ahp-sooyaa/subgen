@@ -27,6 +27,9 @@ final class ViewerModel: ObservableObject {
     /// English text as loaded, to mark the lines the user changed.
     private(set) var original: [Int: String] = [:]
     private var observer: Any?
+    private var keyMonitor: Any?
+    /// The viewer's window; keys pressed in other windows (sheets, dialogs) are left alone.
+    weak var window: NSWindow?
 
     init(video: String, enPath: String, bothPath: String?) {
         self.enPath = enPath
@@ -43,11 +46,32 @@ final class ViewerModel: ObservableObject {
                   let d = try? await asset.load(.duration).seconds, d.isFinite else { return }
             self?.clock.duration = d
         }
+        keyMonitor = NSEvent.addLocalMonitorForEvents(matching: .keyDown) { [weak self] event in
+            MainActor.assumeIsolated { self?.handleKey(event) ?? false } ? nil : event
+        }
+    }
+
+    /// Space plays/pauses, ← / → seek 10 s. Handled for the whole window rather than a focused view,
+    /// so they work wherever focus is — except while a text field is being edited.
+    private func handleKey(_ event: NSEvent) -> Bool {
+        guard let window, event.window === window, window.attachedSheet == nil,
+              event.modifierFlags.intersection([.command, .control, .option, .shift]).isEmpty,
+              !(window.firstResponder is NSText) else { return false }
+        switch event.keyCode {
+        case 49:  // space
+            if !event.isARepeat { togglePlay() }
+        case 123: seek(to: clock.time - 10)  // ←
+        case 124: seek(to: clock.time + 10)  // →
+        default: return false
+        }
+        return true
     }
 
     func stopObserving() {
         if let observer { player.removeTimeObserver(observer) }
         observer = nil
+        if let keyMonitor { NSEvent.removeMonitor(keyMonitor) }
+        keyMonitor = nil
         player.pause()
     }
 
@@ -65,6 +89,7 @@ final class ViewerModel: ObservableObject {
     }
 
     func seek(to t: Double) {
+        let t = clock.duration > 0 ? min(max(0, t), clock.duration) : max(0, t)
         player.seek(to: CMTime(seconds: max(0, t), preferredTimescale: 600), toleranceBefore: .zero, toleranceAfter: .zero)
         clock.time = t
     }
@@ -222,7 +247,10 @@ struct ViewerContent: View {
                 }
             }
         }
-        .background(WindowAccessor { window = $0 })
+        .background(WindowAccessor { w in
+            window = w
+            model.window = w
+        })
         .onChange(of: leaveRequested) { _, r in if r { requestLeave() } }
         .confirmationDialog("Save your changes to the subtitles?", isPresented: $confirmLeave) {
             Button("Save") { model.save(); leave() }
@@ -302,15 +330,16 @@ struct ViewerContent: View {
                         }
                     }
                     .contentShape(Rectangle())
-                    .onTapGesture { model.togglePlay() }
+                    .onTapGesture {
+                        // Ends any edit in the Lines list, so Space and the arrows reach the player.
+                        window?.makeFirstResponder(nil)
+                        model.togglePlay()
+                    }
             }
             Transport(model: model, clock: model.clock)
         }
         .frame(minWidth: 520)
         .background(Theme.video)
-        .focusable()
-        .focusEffectDisabled()
-        .onKeyPress(.space) { model.togglePlay(); return .handled }
     }
 
     private var lines: some View {
@@ -414,7 +443,7 @@ struct Transport: View {
                     .background(Theme.videoText, in: Circle())
             }
             .buttonStyle(.plain)
-            .help(clock.playing ? "Pause" : "Play")
+            .help(clock.playing ? "Pause (Space)" : "Play (Space)")
             Text(formatDuration(scrub ?? clock.time)).font(Theme.mono(12)).foregroundStyle(Theme.videoMuted)
             GeometryReader { geo in
                 let w = geo.size.width
@@ -434,6 +463,7 @@ struct Transport: View {
                     })
             }
             .frame(height: 18)
+            .help("← / → skip back / forward 10 s")
             Text(formatDuration(clock.duration)).font(Theme.mono(12)).foregroundStyle(Theme.videoMuted)
         }
         .padding(.horizontal, 18).padding(.top, 12).padding(.bottom, 14)
