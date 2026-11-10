@@ -1,6 +1,7 @@
 """Get the video: download from YouTube with yt-dlp, or use a local file."""
 import json
 import re
+import shutil
 import subprocess
 from pathlib import Path
 
@@ -18,6 +19,26 @@ def slug_for(src: str) -> str:
     return re.sub(r"[^\w.-]+", "_", Path(src).stem)
 
 
+def _js_runtimes() -> dict:
+    """JS runtimes yt-dlp may use to solve YouTube's player challenges.
+
+    Without one, yt-dlp falls back to clients whose stream URLs often 403.
+    The Mac app runs us with a bare PATH, so also look in common install spots.
+    """
+    home = Path.home()
+    known = {
+        "deno": [home / ".deno/bin/deno"],
+        "bun": [home / ".bun/bin/bun"],
+        "node": [home / ".local/share/fnm/aliases/default/bin/node", home / ".volta/bin/node"],
+    }
+    found = {}
+    for name, extra in known.items():
+        path = shutil.which(name) or next((str(c) for c in extra if c.exists()), None)
+        if path:
+            found[name] = {"path": path}
+    return found
+
+
 def fetch(src: str, workdir: Path) -> tuple[Path, str]:
     """Return (video path, human title)."""
     if not is_url(src):
@@ -33,7 +54,7 @@ def fetch(src: str, workdir: Path) -> tuple[Path, str]:
     if video.exists() and meta.exists():
         m = json.loads(meta.read_text())
         if "description" not in m:  # cached before descriptions were kept
-            with yt_dlp.YoutubeDL({"quiet": True, "noplaylist": True}) as ydl:
+            with yt_dlp.YoutubeDL({"quiet": True, "noplaylist": True, "js_runtimes": _js_runtimes()}) as ydl:
                 m["description"] = ydl.extract_info(src, download=False).get("description", "")
             meta.write_text(json.dumps(m, ensure_ascii=False))
         return video, m["title"]
@@ -46,6 +67,9 @@ def fetch(src: str, workdir: Path) -> tuple[Path, str]:
         "quiet": True,
         "noprogress": True,
         "progress_hooks": [_download_progress],
+        "js_runtimes": _js_runtimes(),
+        "retries": 10,
+        "fragment_retries": 10,
     }
     print("Downloading video (720p)…")
     with yt_dlp.YoutubeDL(opts) as ydl:
