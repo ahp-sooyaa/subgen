@@ -35,6 +35,7 @@ struct ContentView: View {
                 store.add(job)
                 selection = job.id
             }
+            .environmentObject(store)
         }
     }
 
@@ -137,7 +138,18 @@ struct Sidebar: View {
     var onNew: () -> Void
     @EnvironmentObject private var store: JobStore
     @AppStorage("model") private var model = "sonnet"
+    @AppStorage("jobGrouping") private var grouping: JobGrouping = .status
+    @AppStorage("collapsedGroups") private var collapsedRaw = ""
     @FocusState private var focused: Bool
+    @State private var prompt: PlaylistPrompt?
+    @State private var promptName = ""
+    @State private var deleting: Playlist?
+
+    /// What the playlist name alert is for.
+    enum PlaylistPrompt {
+        case create(addJob: UUID?)
+        case rename(UUID)
+    }
 
     var body: some View {
         VStack(alignment: .leading, spacing: 0) {
@@ -155,28 +167,56 @@ struct Sidebar: View {
             .contentShape(Rectangle())
             .windowDraggable()
 
-            Text("JOBS")
-                .font(.system(size: 11, weight: .semibold)).kerning(0.6)
-                .foregroundStyle(Theme.ink3)
-                .padding(.horizontal, 20).padding(.top, 6).padding(.bottom, 8)
+            HStack(spacing: 6) {
+                Text("JOBS")
+                    .font(.system(size: 11, weight: .semibold)).kerning(0.6)
+                Spacer()
+                Menu {
+                    Picker("Group by", selection: $grouping) {
+                        ForEach(JobGrouping.allCases) { Text($0.label).tag($0) }
+                    }
+                    .pickerStyle(.inline)
+                    Divider()
+                    Button("New Playlist…") { askNewPlaylist(addJob: nil) }
+                } label: {
+                    Image(systemName: "line.3.horizontal.decrease")
+                        .font(.system(size: 12, weight: .semibold))
+                }
+                .menuStyle(.borderlessButton)
+                .menuIndicator(.hidden)
+                .fixedSize()
+                .help("Group jobs by…")
+            }
+            .foregroundStyle(Theme.ink3)
+            .padding(.leading, 20).padding(.trailing, 18).padding(.top, 6).padding(.bottom, 8)
 
             ScrollView {
                 VStack(spacing: 2) {
-                    ForEach(store.jobs) { job in
-                        JobRow(job: job, progress: store.progress[job.id], selected: selection == job.id)
-                            .onTapGesture { selection = job.id }
-                            .contextMenu {
-                                Button("Remove", role: .destructive) { store.remove(job.id) }
+                    ForEach(groups) { group in
+                        if !group.title.isEmpty {
+                            header(group)
+                        }
+                        if !isCollapsed(group.id) {
+                            ForEach(group.jobs) { job in
+                                JobRow(job: job, progress: store.progress[job.id], selected: selection == job.id)
+                                    .onTapGesture { selection = job.id }
+                                    .draggable(job.id.uuidString)
+                                    .contextMenu { rowMenu(job) }
                             }
+                        }
                     }
                 }
                 .padding(.horizontal, 10)
+                .padding(.bottom, 8)
             }
             .focusable()
             .focusEffectDisabled()
             .focused($focused)
             .onKeyPress(.upArrow) { move(-1) }
             .onKeyPress(.downArrow) { move(1) }
+            .onChange(of: selection) { _, _ in revealSelection() }
+            .onChange(of: grouping) { _, _ in revealSelection() }
+            .onChange(of: store.jobs) { _, _ in revealSelection() }
 
             HStack(spacing: 10) {
                 Image(systemName: "sparkle").font(.system(size: 14))
@@ -193,14 +233,166 @@ struct Sidebar: View {
             .overlay(alignment: .top) { Theme.divider.frame(height: 1) }
         }
         .background(Theme.sidebar)
+        .alert(promptTitle, isPresented: Binding(get: { prompt != nil }, set: { if !$0 { prompt = nil } })) {
+            TextField("Name", text: $promptName)
+            Button("Cancel", role: .cancel) {}
+            Button(promptAction) { commitPrompt() }
+                .disabled(trimmedName.isEmpty)
+        }
+        .alert("Delete “\(deleting?.name ?? "")”?",
+               isPresented: Binding(get: { deleting != nil }, set: { if !$0 { deleting = nil } })) {
+            Button("Cancel", role: .cancel) {}
+            Button("Delete Playlist", role: .destructive) {
+                if let id = deleting?.id { store.deletePlaylist(id) }
+            }
+        } message: {
+            Text("Its videos stay in your jobs, outside any playlist.")
+        }
+    }
+
+    private var groups: [JobGroup] { grouped(store.jobs, by: grouping, playlists: store.playlists) }
+
+    // MARK: Playlists
+
+    @ViewBuilder private func header(_ group: JobGroup) -> some View {
+        let isPlaylists = grouping == .playlist
+        let list = isPlaylists ? UUID(uuidString: group.id).flatMap { store.playlist($0) } : nil
+        GroupHeader(title: group.title, count: group.jobs.count, collapsed: isCollapsed(group.id),
+                    onToggle: { toggle(group.id) },
+                    onDrop: isPlaylists ? { jobID in store.setPlaylist(jobID, list?.id) } : nil)
+            .contextMenu {
+                if let list {
+                    Button("Rename…") {
+                        promptName = list.name
+                        prompt = .rename(list.id)
+                    }
+                    Button("Delete Playlist…", role: .destructive) { deleting = list }
+                }
+            }
+    }
+
+    @ViewBuilder private func rowMenu(_ job: Job) -> some View {
+        Menu("Playlist") {
+            ForEach(store.playlists.byName) { list in
+                Toggle(list.name, isOn: Binding(
+                    get: { job.playlist == list.id },
+                    set: { store.setPlaylist(job.id, $0 ? list.id : nil) }))
+            }
+            if !store.playlists.isEmpty {
+                Button("None") { store.setPlaylist(job.id, nil) }
+                    .disabled(store.playlist(job.playlist) == nil)
+                Divider()
+            }
+            Button("New Playlist…") { askNewPlaylist(addJob: job.id) }
+        }
+        Divider()
+        Button("Remove", role: .destructive) { store.remove(job.id) }
+    }
+
+    private func askNewPlaylist(addJob: UUID?) {
+        promptName = ""
+        prompt = .create(addJob: addJob)
+    }
+
+    private var trimmedName: String { promptName.trimmingCharacters(in: .whitespaces) }
+
+    private var promptTitle: String {
+        if case .rename = prompt { return "Rename Playlist" }
+        return "New Playlist"
+    }
+
+    private var promptAction: String {
+        if case .rename = prompt { return "Rename" }
+        return "Create"
+    }
+
+    private func commitPrompt() {
+        let name = trimmedName
+        guard !name.isEmpty, let p = prompt else { return }
+        switch p {
+        case .create(let jobID):
+            let id = store.createPlaylist(name)
+            if let jobID { store.setPlaylist(jobID, id) }
+            grouping = .playlist  // so the new playlist is visible
+        case .rename(let id):
+            store.renamePlaylist(id, to: name)
+        }
+        prompt = nil
+    }
+
+    // MARK: Sections
+
+    /// Collapsed sections, saved per grouping as "grouping:section".
+    private var collapsed: Set<String> { Set(collapsedRaw.split(separator: ",").map(String.init)) }
+    private func key(_ groupID: String) -> String { "\(grouping.rawValue):\(groupID)" }
+    private func isCollapsed(_ groupID: String) -> Bool { collapsed.contains(key(groupID)) }
+
+    private func setCollapsed(_ groupID: String, _ value: Bool) {
+        var set = collapsed
+        if value { set.insert(key(groupID)) } else { set.remove(key(groupID)) }
+        collapsedRaw = set.sorted().joined(separator: ",")
+    }
+
+    private func toggle(_ groupID: String) {
+        withAnimation(.easeOut(duration: 0.15)) { setCollapsed(groupID, !isCollapsed(groupID)) }
+    }
+
+    /// Opens the section holding the selected job, e.g. a job just added to a collapsed section.
+    private func revealSelection() {
+        guard let id = selection,
+              let group = groups.first(where: { $0.jobs.contains { $0.id == id } }),
+              isCollapsed(group.id) else { return }
+        setCollapsed(group.id, false)
     }
 
     private func move(_ delta: Int) -> KeyPress.Result {
-        let ids = store.jobs.map(\.id)
+        let ids = groups.filter { !isCollapsed($0.id) }.flatMap { $0.jobs.map(\.id) }
         guard !ids.isEmpty else { return .ignored }
         let i = selection.flatMap { ids.firstIndex(of: $0) } ?? (delta > 0 ? -1 : ids.count)
         selection = ids[min(max(i + delta, 0), ids.count - 1)]
         return .handled
+    }
+}
+
+/// A collapsible section title in the job list.
+struct GroupHeader: View {
+    let title: String
+    let count: Int
+    let collapsed: Bool
+    var onToggle: () -> Void
+    /// Set when jobs can be dropped here to move them into this section (playlists).
+    var onDrop: ((UUID) -> Void)? = nil
+    @State private var hover = false
+    @State private var targeted = false
+
+    var body: some View {
+        Button(action: onToggle) {
+            HStack(spacing: 6) {
+                Image(systemName: "chevron.right")
+                    .font(.system(size: 9, weight: .bold))
+                    .rotationEffect(.degrees(collapsed ? 0 : 90))
+                    .frame(width: 10)
+                Text(title).font(.system(size: 11.5, weight: .semibold))
+                Spacer(minLength: 0)
+                Text("\(count)").font(.system(size: 11).monospacedDigit())
+            }
+            .foregroundStyle(hover ? Theme.ink2 : Theme.ink3)
+            .padding(.horizontal, 10).padding(.vertical, 5)
+            .background(targeted ? Theme.accentSoft : .clear, in: RoundedRectangle(cornerRadius: 6))
+            .overlay {
+                if targeted { RoundedRectangle(cornerRadius: 6).strokeBorder(Theme.accent, lineWidth: 1) }
+            }
+            .contentShape(Rectangle())
+        }
+        .buttonStyle(.plain)
+        .padding(.top, 5)
+        .onHover { hover = $0 }
+        .dropDestination(for: String.self) { items, _ in
+            guard let onDrop else { return false }
+            let ids = items.compactMap(UUID.init(uuidString:))
+            ids.forEach(onDrop)
+            return !ids.isEmpty
+        } isTargeted: { targeted = $0 && onDrop != nil }
     }
 }
 
@@ -216,7 +408,7 @@ struct JobRow: View {
         HStack(alignment: .top, spacing: 10) {
             StatusGlyph(status: job.status, onSelection: selected).padding(.top, 1)
             VStack(alignment: .leading, spacing: 3) {
-                Text(job.displayName)
+                Text(job.displayName(progress))
                     .font(.system(size: 13, weight: .medium))
                     .lineLimit(1).truncationMode(.tail)
                 Text(meta)

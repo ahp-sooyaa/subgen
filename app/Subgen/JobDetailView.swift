@@ -56,7 +56,7 @@ struct JobDetailView: View {
 
     private var toolbar: some View {
         HStack(spacing: 8) {
-            Text(job.displayName)
+            Text(job.displayName(progress))
                 .font(.system(size: 15, weight: .semibold))
                 .lineLimit(1).truncationMode(.middle)
                 .frame(maxWidth: .infinity, alignment: .leading)
@@ -132,6 +132,9 @@ struct JobDetailView: View {
                         Pill(text: "\(formatDuration(s))–\(formatDuration(s + d))")
                     }
                     if job.bilingual { Pill(text: "Bilingual") }
+                    if let list = store.playlist(job.playlist) {
+                        Pill(text: "Playlist · \(list.name)")
+                    }
                 }
                 Text(shortSource)
                     .font(Theme.mono(11.5)).foregroundStyle(Theme.ink3)

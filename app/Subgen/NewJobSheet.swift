@@ -4,6 +4,10 @@ import UniformTypeIdentifiers
 struct NewJobSheet: View {
     var onAdd: (Job) -> Void
     @Environment(\.dismiss) private var dismiss
+    @EnvironmentObject private var store: JobStore
+    /// The playlist used last, so several episodes in a row land in the same one.
+    @AppStorage("lastPlaylist") private var lastPlaylist = ""
+    @State private var playlist: UUID?
 
     @State private var source = ""
     @State private var mode: JobMode = .merge
@@ -61,6 +65,18 @@ struct NewJobSheet: View {
             }
 
             VStack(spacing: 0) {
+                if !store.playlists.isEmpty {
+                    OptionRow {
+                        Text("Playlist").frame(maxWidth: .infinity, alignment: .leading)
+                        Picker("Playlist", selection: $playlist) {
+                            Text("None").tag(UUID?.none)
+                            Divider()
+                            ForEach(store.playlists.byName) { Text($0.name).tag(UUID?.some($0.id)) }
+                        }
+                        .labelsHidden()
+                        .frame(width: 240)
+                    }
+                }
                 OptionRow {
                     Text("Output name").frame(maxWidth: .infinity, alignment: .leading)
                     BoxedField(label: "Output name", text: $name, prompt: "video title", trailing: true)
@@ -120,6 +136,8 @@ struct NewJobSheet: View {
                     job.bilingual = bilingual
                     job.whisperHints = whisperHints && mode != .ocr
                     job.glossaryPath = glossary.isEmpty ? nil : glossary
+                    job.playlist = playlist
+                    lastPlaylist = playlist?.uuidString ?? ""
                     onAdd(job)
                     dismiss()
                 }
@@ -130,6 +148,7 @@ struct NewJobSheet: View {
         }
         .padding(24)
         .frame(width: 580)
+        .onAppear { playlist = store.playlist(UUID(uuidString: lastPlaylist))?.id }
         .background(Theme.bg)
         .foregroundStyle(Theme.ink)
     }

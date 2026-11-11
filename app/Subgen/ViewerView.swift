@@ -224,7 +224,7 @@ struct ViewerScreen: View {
             ViewerContent(video: video, hdPath: hd,
                           hdProgress: hd == nil && busy && hdStage?.running == true ? (hdStage?.frac ?? 0) : nil,
                           enPath: en, bothPath: p?.outputs["en-zh"],
-                          title: store.job(jobID)?.displayName ?? "Subtitles",
+                          title: store.job(jobID)?.displayName(p) ?? "Subtitles",
                           leaveRequested: $leaveRequested, onLeave: onLeave)
         } else {
             VStack(spacing: 0) {

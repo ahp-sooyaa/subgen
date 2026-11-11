@@ -68,6 +68,8 @@ struct Job: Codable, Identifiable, Equatable {
     var status: JobStatus = .queued
     /// Extra arguments for the next run only (e.g. --redo translate).
     var nextRunExtra: [String] = []
+    /// The playlist this job is in, if any. Optional so older jobs.json files still load.
+    var playlist: UUID? = nil
 
     var displayName: String {
         if !name.isEmpty { return name }
@@ -75,6 +77,100 @@ struct Job: Codable, Identifiable, Equatable {
         return URL(fileURLWithPath: source).deletingPathExtension().lastPathComponent
     }
 
+    /// The name to show: the user's name, else the video title the pipeline found, else the source.
+    func displayName(_ progress: JobProgress?) -> String {
+        if name.isEmpty, let t = progress?.title, !t.isEmpty { return t }
+        return displayName
+    }
+}
+
+/// A named collection of jobs, e.g. one season of a show. Saved in playlists.json.
+struct Playlist: Codable, Identifiable, Equatable {
+    var id = UUID()
+    var name: String
+    var created = Date()
+}
+
+extension Array where Element == Playlist {
+    /// By name, with numbers compared as numbers (Season 9 before Season 10).
+    var byName: [Playlist] { sorted { $0.name.localizedStandardCompare($1.name) == .orderedAscending } }
+}
+
+// MARK: - Sidebar grouping
+
+enum JobGrouping: String, CaseIterable, Identifiable {
+    case none, status, mode, date, playlist
+
+    var id: String { rawValue }
+    var label: String {
+        switch self {
+        case .none: "None"
+        case .status: "Status"
+        case .mode: "Mode"
+        case .date: "Date"
+        case .playlist: "Playlist"
+        }
+    }
+}
+
+struct JobGroup: Identifiable {
+    static let noPlaylist = "none"
+    let id: String
+    let title: String
+    var jobs: [Job]
+}
+
+/// Splits jobs into sidebar sections in a fixed order, keeping the list's order inside each one.
+/// Empty sections are left out, except playlists, so a new one shows up; `.none` gives one
+/// untitled section.
+func grouped(_ jobs: [Job], by grouping: JobGrouping, playlists: [Playlist] = [],
+             now: Date = .now) -> [JobGroup] {
+    let order: [(id: String, title: String)]
+    let key: (Job) -> String
+    switch grouping {
+    case .none:
+        return [JobGroup(id: "all", title: "", jobs: jobs)]
+    case .playlist:
+        let known = Set(playlists.map(\.id))
+        let buckets = Dictionary(grouping: jobs) { $0.playlist.flatMap { known.contains($0) ? $0 : nil } }
+        var groups = playlists.byName.map {
+            JobGroup(id: $0.id.uuidString, title: $0.name, jobs: buckets[$0.id] ?? [])
+        }
+        if let loose = buckets[nil], !loose.isEmpty {
+            groups.append(JobGroup(id: JobGroup.noPlaylist, title: "No playlist", jobs: loose))
+        }
+        return groups
+    case .status:
+        order = [("active", "In progress"), ("queued", "Queued"), ("done", "Done"), ("ended", "Failed & stopped")]
+        key = {
+            switch $0.status {
+            case .running, .paused: "active"
+            case .queued: "queued"
+            case .done: "done"
+            case .failed, .stopped: "ended"
+            }
+        }
+    case .mode:
+        order = JobMode.allCases.map { ($0.rawValue, $0.short) }
+        key = { $0.mode.rawValue }
+    case .date:
+        order = [("today", "Today"), ("yesterday", "Yesterday"), ("week", "This week"),
+                 ("month", "This month"), ("earlier", "Earlier")]
+        let cal = Calendar.current
+        key = { job in
+            let d = job.created
+            if cal.isDateInToday(d) { return "today" }
+            if cal.isDateInYesterday(d) { return "yesterday" }
+            if cal.isDate(d, equalTo: now, toGranularity: .weekOfYear) { return "week" }
+            if cal.isDate(d, equalTo: now, toGranularity: .month) { return "month" }
+            return "earlier"
+        }
+    }
+    let buckets = Dictionary(grouping: jobs, by: key)
+    return order.compactMap { g in
+        guard let js = buckets[g.id], !js.isEmpty else { return nil }
+        return JobGroup(id: g.id, title: g.title, jobs: js)
+    }
 }
 
 /// What the pipeline has reported, rebuilt from the job's events.jsonl.

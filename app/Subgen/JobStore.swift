@@ -7,6 +7,7 @@ final class JobStore: ObservableObject {
     @Published private(set) var jobs: [Job] = []
     @Published private(set) var progress: [UUID: JobProgress] = [:]
     @Published private(set) var logs: [UUID: String] = [:]
+    @Published private(set) var playlists: [Playlist] = []
 
     private var process: Process?
     private var runningID: UUID?
@@ -40,6 +41,7 @@ final class JobStore: ObservableObject {
     private func eventsURL(_ id: UUID) -> URL { jobDir(id).appendingPathComponent("events.jsonl") }
     private func logURL(_ id: UUID) -> URL { jobDir(id).appendingPathComponent("log.txt") }
     private var jobsURL: URL { supportDir.appendingPathComponent("jobs.json") }
+    private var playlistsURL: URL { supportDir.appendingPathComponent("playlists.json") }
 
     private func load() {
         guard let data = try? Data(contentsOf: jobsURL),
@@ -49,10 +51,18 @@ final class JobStore: ObservableObject {
             saved[i].status = .stopped
         }
         jobs = saved
+        if let data = try? Data(contentsOf: playlistsURL),
+           let lists = try? JSONDecoder().decode([Playlist].self, from: data) {
+            playlists = lists
+        }
     }
 
     private func save() {
         if let data = try? JSONEncoder().encode(jobs) { try? data.write(to: jobsURL, options: .atomic) }
+    }
+
+    private func savePlaylists() {
+        if let data = try? JSONEncoder().encode(playlists) { try? data.write(to: playlistsURL, options: .atomic) }
     }
 
     func job(_ id: UUID) -> Job? { jobs.first { $0.id == id } }
@@ -61,6 +71,36 @@ final class JobStore: ObservableObject {
         guard let i = jobs.firstIndex(where: { $0.id == id }) else { return }
         change(&jobs[i])
         save()
+    }
+
+    // MARK: - Playlists
+
+    func playlist(_ id: UUID?) -> Playlist? { id.flatMap { id in playlists.first { $0.id == id } } }
+
+    @discardableResult
+    func createPlaylist(_ name: String) -> UUID {
+        let list = Playlist(name: name)
+        playlists.append(list)
+        savePlaylists()
+        return list.id
+    }
+
+    func renamePlaylist(_ id: UUID, to name: String) {
+        guard let i = playlists.firstIndex(where: { $0.id == id }) else { return }
+        playlists[i].name = name
+        savePlaylists()
+    }
+
+    /// Removes the playlist; its jobs stay, outside any playlist.
+    func deletePlaylist(_ id: UUID) {
+        playlists.removeAll { $0.id == id }
+        for i in jobs.indices where jobs[i].playlist == id { jobs[i].playlist = nil }
+        savePlaylists()
+        save()
+    }
+
+    func setPlaylist(_ jobID: UUID, _ playlistID: UUID?) {
+        update(jobID) { $0.playlist = playlistID }
     }
 
     // MARK: - Actions
