@@ -140,6 +140,7 @@ final class JobStore: ObservableObject {
         if job.mode != .ocr { args += ["--asr", job.mode.rawValue] }
         if job.whisperHints && job.mode != .ocr { args.append("--whisper-hints") }
         if let g = job.glossaryPath, !g.isEmpty { args += ["--glossary", g] }
+        if !AppSettings.hdCopy { args.append("--no-hd") }
         return args + job.nextRunExtra
     }
 

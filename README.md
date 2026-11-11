@@ -19,11 +19,14 @@ Useful options:
 - `--no-translate`: stop after the Chinese `.srt`.
 - `--redo region|ocr|translate`: ignore cached results from that stage on (results are cached in `work/`).
 - `--model sonnet|opus`: Claude model used for translation.
+- `--no-hd`: skip the 1080p copy for watching (see below).
 
 `glossary.txt` maps cast names to English spellings. Add new guests there.
 
 ## How it works
-1. `yt-dlp` downloads 720p H.264.
+1. `yt-dlp` downloads 720p H.264. Meanwhile a 1080p H.264 copy (`work/<id>/video.1080.mp4`) downloads in the
+   background for watching only; it reuses the 720p audio and is dropped if the lengths differ or YouTube has no
+   1080p H.264. Processing always uses 720p.
 2. About 40–120 frames are OCR'd to find the band where changing text lives (the caption band).
 3. `ffmpeg` crops that band at 4 fps. A frame is only OCR'd when its white-text pixels change.
 4. Watermarks, sponsor badges (far left and right edges) and blacklisted words are dropped. Frames with the same text are merged into timed cues.
@@ -50,7 +53,8 @@ For videos without burned-in captions, or to compare against OCR. Install the ex
 `app/` is a SwiftUI front end for the same pipeline: a job queue, live progress per stage with ETA,
 pause / continue / stop, resume after stopping or quitting (finished chunks come from the cache), a
 glossary editor with "Save & Re-translate", and a viewer that plays the video with the subtitles and
-lets you fix English lines. It runs `.venv/bin/subgen --events …`, so the CLI setup above is required.
+lets you fix English lines. The viewer switches between 720p and the 1080p copy once it's downloaded
+(Settings → "Download HD copy for watching"). It runs `.venv/bin/subgen --events …`, so the CLI setup above is required.
 ```
 cd ~/Personal/subgen/app && xcodegen generate && xcodebuild -scheme Subgen -configuration Release -derivedDataPath build.noindex build
 open /Applications/Subgen.app

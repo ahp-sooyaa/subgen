@@ -8,6 +8,8 @@ enum AppSettings {
     static var repoPath: String { defaults.string(forKey: "repoPath") ?? defaultRepo }
     static var outputDir: String { defaults.string(forKey: "outputDir") ?? defaultRepo + "/out" }
     static var model: String { defaults.string(forKey: "model") ?? "sonnet" }
+    /// Also fetch a 1080p copy of YouTube videos for the viewer.
+    static var hdCopy: Bool { defaults.object(forKey: "hdCopy") as? Bool ?? true }
     static var appearance: AppAppearance {
         AppAppearance(rawValue: defaults.string(forKey: "appearance") ?? "") ?? .system
     }
@@ -40,6 +42,7 @@ struct SettingsView: View {
     @AppStorage("outputDir") private var outputDir = AppSettings.defaultRepo + "/out"
     @AppStorage("model") private var model = "sonnet"
     @AppStorage("appearance") private var appearance = AppAppearance.system
+    @AppStorage("hdCopy") private var hdCopy = true
 
     var body: some View {
         Form {
@@ -61,6 +64,9 @@ struct SettingsView: View {
                 Text("Sonnet").tag("sonnet")
                 Text("Opus").tag("opus")
             }
+            Toggle("Download HD copy for watching", isOn: $hdCopy)
+            Text("YouTube jobs also fetch 1080p for the viewer. Those files are roughly 2–3× larger.")
+                .font(.caption).foregroundStyle(.secondary)
         }
         .padding(20)
         .frame(width: 520)

@@ -3,6 +3,8 @@ import json
 import re
 import shutil
 import subprocess
+import threading
+import time
 from pathlib import Path
 
 from . import events
@@ -84,6 +86,106 @@ def _download_progress(d: dict):
         total = d.get("total_bytes") or d.get("total_bytes_estimate") or 0
         got = d.get("downloaded_bytes", 0)
         events.progress("download", got, total, f"Downloading… {got / 1e6:.0f}/{total / 1e6:.0f} MB")
+
+
+HD_NAME = "video.1080.mp4"
+HD_MAX_DRIFT = 1.0  # seconds the 1080p and 720p copies may differ before subtitles could drift
+
+
+def start_hd(src: str, workdir: Path, video: Path) -> threading.Thread | None:
+    """Fetch a 1080p copy of a YouTube video for watching, in the background.
+
+    Processing stays on the 720p file; this one is only played. Uses `workdir/video.1080.mp4` from an
+    earlier run, and remembers in hd.json when a video has no usable 1080p. Never fails the job.
+    """
+    if not is_url(src):
+        return None
+    hd = workdir / HD_NAME
+    state = workdir / "hd.json"
+    if hd.exists():
+        events.cached("hd")
+        events.emit("hd", path=str(hd.resolve()))
+        return None
+    if state.exists():
+        events.skipped("hd", json.loads(state.read_text()).get("reason", "No 1080p copy"))
+        return None
+    t = threading.Thread(target=_fetch_hd, args=(src, workdir, video), name="hd", daemon=True)
+    t.start()
+    return t
+
+
+def _fetch_hd(src: str, workdir: Path, video: Path):
+    t0 = time.time()
+    events.emit("stage", stage="hd", status="start")
+    try:
+        reason = _download_hd(src, workdir, video)
+    except Exception as e:  # the subtitles don't depend on it, so just report it
+        events.warn(f"HD copy failed, the viewer will play 720p: {e}")
+        events.skipped("hd", "Download failed")
+        return
+    if reason:
+        (workdir / "hd.json").write_text(json.dumps({"reason": reason}))
+        print(f"\n  HD copy: {reason}; the viewer will play 720p.")
+        events.skipped("hd", reason)
+        return
+    hd = workdir / HD_NAME
+    print(f"\n  HD copy ready: {hd}")
+    events.emit("stage", stage="hd", status="done", seconds=round(time.time() - t0, 1))
+    events.emit("hd", path=str(hd.resolve()))
+
+
+def _download_hd(src: str, workdir: Path, video: Path) -> str | None:
+    """Download the 1080p video stream and give it the 720p file's audio. Returns why not, or None."""
+    import yt_dlp
+    from yt_dlp.utils import DownloadError
+
+    for old in workdir.glob("video.1080.v.*"):  # a finished stream from an interrupted run
+        if not old.name.endswith((".part", ".ytdl")):
+            old.unlink()
+    opts = {
+        "noplaylist": True,
+        # H.264 only: above 720p YouTube's other codecs are VP9/AV1, which AVPlayer doesn't play reliably.
+        "format": "bv*[height>720][height<=1080][vcodec^=avc1]",
+        "outtmpl": str(workdir / "video.1080.v.%(ext)s"),
+        "quiet": True,
+        "no_warnings": True,
+        "noprogress": True,
+        "progress_hooks": [_hd_progress],
+        "js_runtimes": _js_runtimes(),
+        "retries": 10,
+        "fragment_retries": 10,
+    }
+    print("\n  Downloading HD copy (1080p) in the background…")
+    try:
+        with yt_dlp.YoutubeDL(opts) as ydl:
+            info = ydl.extract_info(src, download=True)
+    except DownloadError as e:
+        if "format is not available" in str(e):
+            return "No 1080p H.264 copy on YouTube"
+        raise
+    stream = Path(info["requested_downloads"][0]["filepath"])
+
+    hd_dur, sd_dur = probe(stream)[2], probe(video)[2]
+    if abs(hd_dur - sd_dur) > HD_MAX_DRIFT:
+        stream.unlink(missing_ok=True)
+        return f"1080p and 720p lengths differ ({hd_dur:.1f}s vs {sd_dur:.1f}s)"
+
+    tmp = workdir / "video.1080.tmp.mp4"
+    subprocess.run(
+        ["ffmpeg", "-v", "error", "-y", "-i", str(stream), "-i", str(video),
+         "-map", "0:v:0", "-map", "1:a:0?", "-c", "copy", "-movflags", "+faststart", str(tmp)],
+        check=True, capture_output=True,
+    )
+    tmp.replace(workdir / HD_NAME)  # only a complete file ever gets the real name
+    stream.unlink(missing_ok=True)
+    return None
+
+
+def _hd_progress(d: dict):
+    if d.get("status") == "downloading":
+        total = d.get("total_bytes") or d.get("total_bytes_estimate") or 0
+        got = d.get("downloaded_bytes", 0)
+        events.progress("hd", got, total, f"Downloading 1080p… {got / 1e6:.0f}/{total / 1e6:.0f} MB", echo=False)
 
 
 def description(src: str, workdir: Path) -> str:

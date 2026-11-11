@@ -1,9 +1,23 @@
 import AVKit
 import SwiftUI
 
-enum SubtitleLanguage: String, CaseIterable, Identifiable {
+/// A choice shown in a `SegmentedPicker`.
+protocol SegmentOption: CaseIterable, Identifiable, Hashable where AllCases: RandomAccessCollection {
+    var label: String { get }
+}
+
+enum SubtitleLanguage: String, SegmentOption {
     case en = "English", zh = "Chinese", both = "Both"
     var id: String { rawValue }
+    var label: String { rawValue }
+}
+
+/// Which download the viewer plays. Processing always uses 720p; the cues fit either.
+enum VideoQuality: String, SegmentOption {
+    case p720 = "720p", p1080 = "1080p"
+    var id: String { rawValue }
+    var label: String { rawValue }
+    static let defaultsKey = "viewerQuality"
 }
 
 /// Playback position, kept apart from the cues so the clock ticking only redraws the transport bar.
@@ -20,8 +34,13 @@ final class ViewerModel: ObservableObject {
     @Published var current: Int?
     @Published var dirty = false
     @Published var saveError: String?
+    @Published private(set) var quality: VideoQuality
+    @Published private(set) var hdPath: String?
     let clock = PlaybackClock()
     let player: AVPlayer
+    private let sdPath: String
+    /// While swapping copies, ticks report the new item's 0 s before the seek lands; ignore them.
+    private var switching = false
     let enPath: String
     let bothPath: String?
     /// English text as loaded, to mark the lines the user changed.
@@ -31,10 +50,16 @@ final class ViewerModel: ObservableObject {
     /// The viewer's window; keys pressed in other windows (sheets, dialogs) are left alone.
     weak var window: NSWindow?
 
-    init(video: String, enPath: String, bothPath: String?) {
+    init(video: String, hdPath: String?, enPath: String, bothPath: String?) {
         self.enPath = enPath
         self.bothPath = bothPath
-        player = AVPlayer(url: URL(fileURLWithPath: video))
+        sdPath = video
+        self.hdPath = hdPath
+        // The best copy available, unless the user last picked 720p.
+        let wants720 = UserDefaults.standard.string(forKey: VideoQuality.defaultsKey) == VideoQuality.p720.rawValue
+        let start: VideoQuality = hdPath != nil && !wants720 ? .p1080 : .p720
+        quality = start
+        player = AVPlayer(url: URL(fileURLWithPath: start == .p1080 ? hdPath! : video))
         cues = SRT.load(en: enPath, both: bothPath)
         original = Dictionary(uniqueKeysWithValues: cues.map { ($0.id, $0.en) })
         observer = player.addPeriodicTimeObserver(forInterval: CMTime(seconds: 0.1, preferredTimescale: 600),
@@ -75,7 +100,41 @@ final class ViewerModel: ObservableObject {
         player.pause()
     }
 
+    /// Play the other copy from the same position, keeping play/pause.
+    func setQuality(_ q: VideoQuality) {
+        guard q != quality, let path = q == .p1080 ? hdPath : sdPath else { return }
+        UserDefaults.standard.set(q.rawValue, forKey: VideoQuality.defaultsKey)
+        swap(to: q, path: path)
+    }
+
+    /// The 1080p copy finished while the viewer is open. Switch only if playback hasn't started,
+    /// so nobody's watching gets interrupted; otherwise the switch just appears.
+    func hdBecameAvailable(_ path: String) {
+        guard hdPath != path else { return }
+        hdPath = path
+        let wants720 = UserDefaults.standard.string(forKey: VideoQuality.defaultsKey) == VideoQuality.p720.rawValue
+        if !wants720, quality == .p720, !clock.playing, clock.time < 0.5 { swap(to: .p1080, path: path) }
+    }
+
+    private func swap(to q: VideoQuality, path: String) {
+        let t = clock.time
+        let wasPlaying = player.rate != 0
+        switching = true
+        player.pause()
+        player.replaceCurrentItem(with: AVPlayerItem(url: URL(fileURLWithPath: path)))
+        quality = q
+        Task { [weak self] in
+            guard let self else { return }
+            _ = await player.seek(to: CMTime(seconds: t, preferredTimescale: 600),
+                                  toleranceBefore: .zero, toleranceAfter: .zero)
+            switching = false
+            if wasPlaying { player.play() }
+            clock.playing = wasPlaying
+        }
+    }
+
     private func tick(_ t: Double) {
+        guard !switching else { return }
         clock.time = t
         let playing = player.rate != 0
         if clock.playing != playing { clock.playing = playing }
@@ -159,7 +218,12 @@ struct ViewerScreen: View {
     var body: some View {
         let p = store.progress[jobID]
         if let video = p?.videoPath, let en = p?.outputs["en"] {
-            ViewerContent(video: video, enPath: en, bothPath: p?.outputs["en-zh"],
+            let hd = p?.hdVideoPath.flatMap { FileManager.default.fileExists(atPath: $0) ? $0 : nil }
+            let busy = [.running, .paused].contains(store.job(jobID)?.status)
+            let hdStage = p?.stages["hd"]
+            ViewerContent(video: video, hdPath: hd,
+                          hdProgress: hd == nil && busy && hdStage?.running == true ? (hdStage?.frac ?? 0) : nil,
+                          enPath: en, bothPath: p?.outputs["en-zh"],
                           title: store.job(jobID)?.displayName ?? "Subtitles",
                           leaveRequested: $leaveRequested, onLeave: onLeave)
         } else {
@@ -218,14 +282,19 @@ struct ViewerHeader<Title: View, Trailing: View>: View {
 struct ViewerContent: View {
     @StateObject private var model: ViewerModel
     let title: String
+    let hdPath: String?
+    /// Download progress of the 1080p copy while it's on its way, else nil.
+    let hdProgress: Double?
     @Binding var leaveRequested: Bool
     var onLeave: (Bool) -> Void
 
-    init(video: String, enPath: String, bothPath: String?, title: String,
+    init(video: String, hdPath: String?, hdProgress: Double?, enPath: String, bothPath: String?, title: String,
          leaveRequested: Binding<Bool>, onLeave: @escaping (Bool) -> Void) {
         // Autoclosure: the player is created once, not on every refresh of the parent.
-        _model = StateObject(wrappedValue: ViewerModel(video: video, enPath: enPath, bothPath: bothPath))
+        _model = StateObject(wrappedValue: ViewerModel(video: video, hdPath: hdPath, enPath: enPath, bothPath: bothPath))
         self.title = title
+        self.hdPath = hdPath
+        self.hdProgress = hdProgress
         _leaveRequested = leaveRequested
         self.onLeave = onLeave
     }
@@ -252,6 +321,7 @@ struct ViewerContent: View {
             model.window = w
         })
         .onChange(of: leaveRequested) { _, r in if r { requestLeave() } }
+        .onChange(of: hdPath) { _, p in if let p { model.hdBecameAvailable(p) } }
         .confirmationDialog("Save your changes to the subtitles?", isPresented: $confirmLeave) {
             Button("Save") { model.save(); leave() }
             Button("Discard Changes", role: .destructive) { leave() }
@@ -282,6 +352,15 @@ struct ViewerContent: View {
                 }
             }
         } trailing: {
+            if model.hdPath != nil {
+                SegmentedPicker(selection: Binding(get: { model.quality }, set: { model.setQuality($0) }))
+                    .help("Which download to play. The subtitles fit either.")
+            } else if let f = hdProgress {
+                Text(f > 0 ? "1080p downloading… \(Int(f * 100))%" : "1080p downloading…")
+                    .font(.system(size: 12.5, weight: .medium)).monospacedDigit()
+                    .foregroundStyle(Theme.ink3)
+                    .padding(.horizontal, 6)
+            }
             SegmentedPicker(selection: $language)
             Toggle("Follow video", isOn: $follow)
                 .toggleStyle(.checkbox)
@@ -398,15 +477,15 @@ struct ViewerContent: View {
     }
 }
 
-struct SegmentedPicker: View {
-    @Binding var selection: SubtitleLanguage
+struct SegmentedPicker<Option: SegmentOption>: View {
+    @Binding var selection: Option
 
     var body: some View {
         HStack(spacing: 0) {
-            ForEach(SubtitleLanguage.allCases) { lang in
-                let on = selection == lang
-                Button { selection = lang } label: {
-                    Text(lang.rawValue)
+            ForEach(Option.allCases) { option in
+                let on = selection == option
+                Button { selection = option } label: {
+                    Text(option.label)
                         .font(.system(size: 12.5, weight: on ? .semibold : .medium))
                         .foregroundStyle(on ? Theme.ink : Theme.chipText)
                         .padding(.horizontal, 12).frame(height: 26)

@@ -5,12 +5,14 @@ human-readable lines.
 """
 import json
 import sys
+import threading
 import time
 from contextlib import contextmanager
 
 _file = None
 _base: dict[str, tuple[float, float]] = {}  # stage -> (time, frac) of its first progress report
 _last: dict[str, float] = {}
+_lock = threading.Lock()  # the HD download thread emits alongside the main one
 
 
 def init(path: str):
@@ -20,9 +22,10 @@ def init(path: str):
 
 def emit(kind: str, /, **fields):
     if _file:
-        _file.write(json.dumps({"ts": round(time.time(), 3), "type": kind, **fields},
-                               ensure_ascii=False, default=str) + "\n")
-        _file.flush()
+        line = json.dumps({"ts": round(time.time(), 3), "type": kind, **fields}, ensure_ascii=False, default=str)
+        with _lock:
+            _file.write(line + "\n")
+            _file.flush()
 
 
 @contextmanager
@@ -39,10 +42,19 @@ def cached(name: str):
     emit("stage", stage=name, status="done", seconds=0, cached=True)
 
 
-def progress(stage_name: str, done: float, total: float, text: str):
-    """Print `text` as the usual \\r status line and emit a throttled progress event with an ETA."""
-    sys.stdout.write(f"\r  {text} ")
-    sys.stdout.flush()
+def skipped(name: str, reason: str):
+    """An optional stage that didn't produce anything; the job carries on without it."""
+    emit("stage", stage=name, status="skipped", reason=reason)
+
+
+def progress(stage_name: str, done: float, total: float, text: str, echo: bool = True):
+    """Print `text` as the usual \\r status line and emit a throttled progress event with an ETA.
+
+    echo=False for work running alongside another stage, so the two don't fight over the line.
+    """
+    if echo:
+        sys.stdout.write(f"\r  {text} ")
+        sys.stdout.flush()
     frac = min(1.0, done / total) if total else 0.0
     now = time.time()
     t0, f0 = _base.setdefault(stage_name, (now, frac))

@@ -33,6 +33,7 @@ func stageLabel(_ stage: String) -> String {
         "download": "Download video", "region": "Find caption area", "ocr": "Read captions (OCR)",
         "audio": "Extract audio", "whisper": "Whisper", "sensevoice": "SenseVoice",
         "glossary": "Build name glossary", "translate": "Correct & translate",
+        "hd": "HD copy (1080p)",
     ][stage] ?? stage
 }
 
@@ -73,6 +74,7 @@ struct Job: Codable, Identifiable, Equatable {
         if source.hasPrefix("http") { return source }
         return URL(fileURLWithPath: source).deletingPathExtension().lastPathComponent
     }
+
 }
 
 /// What the pipeline has reported, rebuilt from the job's events.jsonl.
@@ -84,6 +86,9 @@ struct JobProgress {
         var eta: Double? = nil
         var text = ""
         var seconds: Double? = nil
+        /// An optional stage that produced nothing (e.g. no 1080p on YouTube); `reason` says why.
+        var skipped = false
+        var reason: String? = nil
     }
 
     var stages: [String: Stage] = [:]
@@ -92,6 +97,8 @@ struct JobProgress {
     var glossaryPath: String? = nil
     var glossaryAuto = false
     var videoPath: String? = nil
+    /// The 1080p copy for watching, when the pipeline made one.
+    var hdVideoPath: String? = nil
     var workDir: String? = nil
     var title: String? = nil
     var error: String? = nil
@@ -108,16 +115,21 @@ struct JobProgress {
             title = e["title"] as? String
         case "stage":
             guard let s = e["stage"] as? String else { return }
-            if e["status"] as? String == "start" {
-                stages[s, default: Stage()].running = true
-                current = s
-            } else {
+            switch e["status"] as? String {
+            case "start":
+                stages[s] = Stage(running: true)
+                if s != "hd" { current = s }  // the HD copy downloads alongside the other stages
+            case "skipped":
+                stages[s] = Stage(done: true, skipped: true, reason: e["reason"] as? String)
+            default:
                 stages[s, default: Stage()].running = false
                 stages[s, default: Stage()].done = true
                 stages[s, default: Stage()].frac = 1
                 stages[s, default: Stage()].eta = nil
                 stages[s, default: Stage()].seconds = e["seconds"] as? Double
             }
+        case "hd":
+            hdVideoPath = e["path"] as? String
         case "progress":
             guard let s = e["stage"] as? String else { return }
             stages[s, default: Stage()].frac = e["frac"] as? Double

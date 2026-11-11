@@ -11,6 +11,8 @@ struct JobDetailView: View {
     private var progress: JobProgress { store.progress[job.id] ?? JobProgress() }
     private var busy: Bool { job.status == .running || job.status == .paused }
     private var glossaryPath: String? { progress.glossaryPath ?? job.glossaryPath }
+    /// The mode's stages, plus the optional HD copy once the pipeline has reported it.
+    private var shownStages: [String] { job.mode.stages + (progress.stages["hd"] != nil ? ["hd"] : []) }
 
     var body: some View {
         VStack(spacing: 0) {
@@ -164,7 +166,11 @@ struct JobDetailView: View {
             HStack(alignment: .firstTextBaseline, spacing: 10) {
                 Text("\(Int(progress.overall(job.mode) * 100))%")
                     .font(.system(size: 30, weight: .bold)).monospacedDigit()
-                if let i = currentIndex, busy {
+                if busy, stages.allSatisfy({ progress.stages[$0]?.done == true }),
+                   progress.stages["hd"]?.running == true {
+                    Text("Subtitles ready · finishing the HD copy")
+                        .font(.system(size: 13)).foregroundStyle(Theme.ink2)
+                } else if let i = currentIndex, busy {
                     Text("Step \(i + 1) of \(stages.count) · \(stageLabel(stages[i]))")
                         .font(.system(size: 13)).foregroundStyle(Theme.ink2)
                 } else {
@@ -190,14 +196,16 @@ struct JobDetailView: View {
     }
 
     private var pipeline: some View {
-        let stages = job.mode.stages
+        let stages = shownStages
         return VStack(alignment: .leading, spacing: 12) {
             Text("Pipeline").font(.system(size: 13, weight: .semibold))
             VStack(alignment: .leading, spacing: 0) {
                 ForEach(Array(stages.enumerated()), id: \.element) { i, name in
+                    // The HD copy runs alongside the other stages, so it's never `current`.
+                    let here = name == "hd" ? progress.stages[name]?.running == true : progress.current == name
                     StageRow(name: name, stage: progress.stages[name],
-                             active: progress.current == name && job.status == .running,
-                             paused: progress.current == name && job.status == .paused,
+                             active: here && job.status == .running,
+                             paused: here && job.status == .paused,
                              last: i == stages.count - 1)
                 }
             }
@@ -206,17 +214,23 @@ struct JobDetailView: View {
 
     private var compactStages: some View {
         FlowLayout(spacing: 8) {
-            ForEach(job.mode.stages, id: \.self) { name in
+            ForEach(shownStages, id: \.self) { name in
+                let stage = progress.stages[name]
                 HStack(spacing: 7) {
-                    Image(systemName: "checkmark.circle.fill")
+                    Image(systemName: stage?.skipped == true ? "minus.circle.fill" : "checkmark.circle.fill")
                         .symbolRenderingMode(.palette)
-                        .foregroundStyle(Theme.paper, Theme.ink)
+                        .foregroundStyle(Theme.paper, stage?.skipped == true ? Theme.ink3 : Theme.ink)
                         .font(.system(size: 15))
                     Text(stageLabel(name)).fontWeight(.medium)
-                    if let t = progress.stages[name]?.seconds {
+                    if stage?.skipped == true {
+                        Text("skipped").foregroundStyle(Theme.ink2)
+                    } else if stage?.done == false {
+                        Text(stage?.frac.map { "\(Int($0 * 100))%" } ?? "…").monospacedDigit().foregroundStyle(Theme.ink2)
+                    } else if let t = stage?.seconds {
                         Text(t < 1 ? "cached" : formatDuration(t)).monospacedDigit().foregroundStyle(Theme.ink2)
                     }
                 }
+                .help(stage?.reason ?? "")
                 .font(.system(size: 12.5))
                 .padding(.leading, 8).padding(.trailing, 11).padding(.vertical, 6)
                 .card(8)
@@ -356,6 +370,7 @@ struct StageRow: View {
                         .foregroundStyle(done || active || paused ? Theme.ink : Theme.ink2)
                     Spacer()
                     Text(detail).font(.system(size: 12.5)).monospacedDigit().foregroundStyle(Theme.ink2)
+                        .help(stage?.reason ?? "")
                 }
                 if active || paused {
                     VStack(alignment: .leading, spacing: 6) {
@@ -371,7 +386,13 @@ struct StageRow: View {
     }
 
     @ViewBuilder private var marker: some View {
-        if done {
+        if stage?.skipped == true {
+            Image(systemName: "minus.circle.fill")
+                .symbolRenderingMode(.palette)
+                .foregroundStyle(Theme.paper, Theme.ink3)
+                .font(.system(size: 22))
+                .frame(width: 22, height: 22)
+        } else if done {
             Image(systemName: "checkmark.circle.fill")
                 .symbolRenderingMode(.palette)
                 .foregroundStyle(Theme.paper, Theme.ink)
@@ -395,6 +416,7 @@ struct StageRow: View {
 
     private var detail: String {
         guard let s = stage else { return "" }
+        if s.skipped { return "skipped" + (s.reason.map { " · \($0)" } ?? "") }
         if s.done { return s.seconds.map { $0 < 1 ? "cached" : formatDuration($0) } ?? "done" }
         var parts: [String] = []
         if let f = s.frac { parts.append("\(Int(f * 100))%") }

@@ -36,13 +36,18 @@ def main():
     ap.add_argument("--whisper-hints", action="store_true",
                     help="with --asr: give Whisper the glossary names too (runs Whisper a second time)")
     ap.add_argument("--redo", choices=["region", "ocr", "asr", "translate"], help="ignore cached results from this stage on")
+    ap.add_argument("--no-hd", action="store_true", help="don't download a 1080p copy for watching (YouTube only)")
     ap.add_argument("--events", help="append machine-readable progress (JSON lines) to this file")
     a = ap.parse_args()
     if a.events:
         events.init(a.events)
         os.setpgrp()  # own process group, so the app can pause/stop us with ffmpeg and claude
+    a.hd_thread = None
     try:
         run(a)
+        if a.hd_thread and a.hd_thread.is_alive():
+            print("Waiting for the HD copy to finish…")
+            a.hd_thread.join()
     except BaseException as e:
         events.emit("error", message=str(e) or type(e).__name__)
         raise
@@ -60,6 +65,9 @@ def run(a):
     with events.stage("download"):
         video, title = fetch.fetch(a.src, ROOT / "work" / fetch.slug_for(a.src))
     W, H, total = fetch.probe(video)
+    if not a.no_hd and not a.preview:
+        # Runs while OCR / ASR / translation use the CPU; the subtitles fit either copy.
+        a.hd_thread = fetch.start_hd(a.src, ROOT / "work" / fetch.slug_for(a.src), video)
     end = min(total, a.start + a.duration) if a.duration else total
     print(f"Video: {title or video.name}  ({W}x{H}, {(end - a.start) / 60:.1f} min)")
 
