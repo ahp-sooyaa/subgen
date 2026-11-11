@@ -217,8 +217,10 @@ struct ViewerScreen: View {
 
     var body: some View {
         let p = store.progress[jobID]
-        if let video = p?.videoPath, let en = p?.outputs["en"] {
+        if let sd = p?.videoPath, let en = p?.outputs["en"] {
             let hd = p?.hdVideoPath.flatMap { FileManager.default.fileExists(atPath: $0) ? $0 : nil }
+            // The 720p file may have been deleted from Storage while the 1080p copy was kept.
+            let video = FileManager.default.fileExists(atPath: sd) ? sd : (hd ?? sd)
             let busy = [.running, .paused].contains(store.job(jobID)?.status)
             let hdStage = p?.stages["hd"]
             ViewerContent(video: video, hdPath: hd,

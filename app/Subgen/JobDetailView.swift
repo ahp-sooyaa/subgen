@@ -14,6 +14,16 @@ struct JobDetailView: View {
     /// The mode's stages, plus the optional HD copy once the pipeline has reported it.
     private var shownStages: [String] { job.mode.stages + (progress.stages["hd"] != nil ? ["hd"] : []) }
 
+    private func exists(_ path: String?) -> Bool { path.map { FileManager.default.fileExists(atPath: $0) } ?? false }
+    /// The downloaded video (or its HD copy) was deleted, e.g. from Storage. A plain re-run fetches it
+    /// again and takes every other stage from the cache.
+    private var videoMissing: Bool {
+        guard job.source.hasPrefix("http"), !busy, job.status != .queued, progress.videoPath != nil else { return false }
+        let hdGone = progress.hdVideoPath != nil && !exists(progress.hdVideoPath) && AppSettings.hdCopy
+        return !exists(progress.videoPath) || hdGone
+    }
+    private var canWatch: Bool { exists(progress.videoPath) || exists(progress.hdVideoPath) }
+
     var body: some View {
         VStack(spacing: 0) {
             toolbar
@@ -98,6 +108,10 @@ struct JobDetailView: View {
     /// Run again from a chosen stage. A plain re-run would take every finished stage from the cache.
     private var redoMenu: some View {
         Menu {
+            if videoMissing {
+                Button("Download Video Again") { store.resume(job.id) }
+                Divider()
+            }
             if job.mode == .ocr {
                 Button("From Finding Caption Area") { store.redo(job.id, from: "region") }
                 Button("From Reading Captions (OCR)") { store.redo(job.id, from: "ocr") }
@@ -242,6 +256,11 @@ struct JobDetailView: View {
     }
 
     @ViewBuilder private var notices: some View {
+        if videoMissing {
+            Notice(text: canWatch ? "The HD copy was deleted. The viewer plays the 720p video until you download it again."
+                                  : "The video was deleted, so the viewer can't play it. Your subtitles are kept.",
+                   systemImage: "film", action: ("Download Video Again", { store.resume(job.id) }))
+        }
         if let err = progress.error, job.status == .failed {
             Notice(text: err, systemImage: "exclamationmark.triangle", error: true)
         }
@@ -262,7 +281,7 @@ struct JobDetailView: View {
                     Spacer()
                     Button(action: onOpenViewer) { Label("Open Viewer", systemImage: "play.fill") }
                         .buttonStyle(.subgen(.primary, height: 32))
-                        .disabled(progress.videoPath == nil || progress.outputs["en"] == nil)
+                        .disabled(!canWatch || progress.outputs["en"] == nil)
                 }
                 .padding(.leading, 20).padding(.trailing, 16).padding(.vertical, 14)
                 ForEach(files, id: \.0) { kind, path in
@@ -335,11 +354,19 @@ struct Notice: View {
     let text: String
     let systemImage: String
     var error = false
+    /// An optional button at the end: its title and what it does.
+    var action: (String, () -> Void)? = nil
 
     var body: some View {
         HStack(alignment: .top, spacing: 10) {
             Image(systemName: systemImage).font(.system(size: 14, weight: .semibold)).padding(.top, 1)
             Text(text).textSelection(.enabled).frame(maxWidth: .infinity, alignment: .leading)
+            if let action {
+                Button(action.0, action: action.1)
+                    .buttonStyle(.subgen(.secondary, height: 26))
+                    .foregroundStyle(Theme.ink)
+                    .padding(.vertical, -4)
+            }
         }
         .font(.system(size: 13))
         .foregroundStyle(error ? Theme.red : Theme.accentText)

@@ -144,6 +144,8 @@ struct Sidebar: View {
     @State private var prompt: PlaylistPrompt?
     @State private var promptName = ""
     @State private var deleting: Playlist?
+    @StateObject private var storage = StorageModel()
+    @State private var showStorage = false
 
     /// What the playlist name alert is for.
     enum PlaylistPrompt {
@@ -218,6 +220,10 @@ struct Sidebar: View {
             .onChange(of: grouping) { _, _ in revealSelection() }
             .onChange(of: store.jobs) { _, _ in revealSelection() }
 
+            StorageRow(total: storage.report?.total, scanning: storage.scanning) { showStorage = true }
+                .padding(.horizontal, 10).padding(.top, 8)
+                .overlay(alignment: .top) { Theme.divider.frame(height: 1) }
+
             HStack(spacing: 10) {
                 Image(systemName: "sparkle").font(.system(size: 14))
                 (Text("Translating with ") + Text(model == "opus" ? "Opus" : "Sonnet")
@@ -229,10 +235,17 @@ struct Sidebar: View {
             }
             .font(.system(size: 12))
             .foregroundStyle(Theme.ink2)
-            .padding(.leading, 20).padding(.trailing, 14).padding(.vertical, 10)
-            .overlay(alignment: .top) { Theme.divider.frame(height: 1) }
+            .padding(.leading, 20).padding(.trailing, 14).padding(.top, 4).padding(.bottom, 10)
         }
         .background(Theme.sidebar)
+        .sheet(isPresented: $showStorage) {
+            StorageView(model: storage).environmentObject(store)
+        }
+        .task(id: storageSignature) {
+            // Measure again once jobs settle: a run finished, a job was added or removed.
+            try? await Task.sleep(for: .seconds(1))
+            if !Task.isCancelled { storage.refresh(store) }
+        }
         .alert(promptTitle, isPresented: Binding(get: { prompt != nil }, set: { if !$0 { prompt = nil } })) {
             TextField("Name", text: $promptName)
             Button("Cancel", role: .cancel) {}
@@ -249,6 +262,9 @@ struct Sidebar: View {
             Text("Its videos stay in your jobs, outside any playlist.")
         }
     }
+
+    /// Changes when a job is added, removed or changes status.
+    private var storageSignature: String { store.jobs.map { "\($0.id)\($0.status.rawValue)" }.joined() }
 
     private var groups: [JobGroup] { grouped(store.jobs, by: grouping, playlists: store.playlists) }
 
@@ -351,6 +367,39 @@ struct Sidebar: View {
         let i = selection.flatMap { ids.firstIndex(of: $0) } ?? (delta > 0 ? -1 : ids.count)
         selection = ids[min(max(i + delta, 0), ids.count - 1)]
         return .handled
+    }
+}
+
+/// The sidebar's disk usage button, opening the Storage sheet.
+struct StorageRow: View {
+    let total: Int64?
+    let scanning: Bool
+    var action: () -> Void
+    @State private var hover = false
+
+    var body: some View {
+        Button(action: action) {
+            HStack(spacing: 10) {
+                Image(systemName: "internaldrive").font(.system(size: 14)).frame(width: 16)
+                Text("Storage").foregroundStyle(Theme.ink)
+                Spacer(minLength: 8)
+                if let total {
+                    Text(formatBytes(total)).monospacedDigit()
+                } else if scanning {
+                    ProgressView().controlSize(.mini)
+                }
+                Image(systemName: "chevron.right").font(.system(size: 10, weight: .semibold))
+                    .foregroundStyle(Theme.ink3)
+            }
+            .font(.system(size: 12.5))
+            .foregroundStyle(Theme.ink2)
+            .padding(.horizontal, 10).frame(height: 34)
+            .background(hover ? Theme.ink.opacity(0.06) : .clear, in: RoundedRectangle(cornerRadius: 8))
+            .contentShape(Rectangle())
+        }
+        .buttonStyle(.plain)
+        .onHover { hover = $0 }
+        .help("Storage used by videos, caches and subtitles")
     }
 }
 

@@ -38,6 +38,35 @@ final class JobStore: ObservableObject {
         try? FileManager.default.createDirectory(at: d, withIntermediateDirectories: true)
         return d
     }
+    /// Where the pipeline keeps downloaded videos and caches, one folder per video.
+    var workRoot: URL { URL(fileURLWithPath: AppSettings.repoPath).appendingPathComponent("work", isDirectory: true) }
+
+    /// Work folders a job uses: its cache folder, and the folder its video was downloaded to
+    /// (different for clips, which share the full video's download).
+    func workFolders(_ id: UUID) -> [String] {
+        guard let p = progress[id] else { return [] }
+        let parents = [p.videoPath, p.hdVideoPath].compactMap { $0 }
+            .map { URL(fileURLWithPath: $0).deletingLastPathComponent().path }
+        return Array(Set(([p.workDir].compactMap { $0 } + parents).map(StorageScanner.standard)))
+    }
+
+    func storageJobInfo() -> [StorageJobInfo] {
+        jobs.map { j in
+            let p = progress[j.id]
+            return StorageJobInfo(id: j.id, name: j.displayName(p), cacheDir: p?.workDir,
+                                  videoDir: p?.videoPath.map { URL(fileURLWithPath: $0).deletingLastPathComponent().path },
+                                  outputs: progress[j.id].map { Array($0.outputs.values) } ?? [])
+        }
+    }
+
+    /// True when `url` is, holds, or sits inside a folder the running (or paused) job writes to.
+    func isLocked(_ url: URL) -> Bool {
+        let path = StorageScanner.standard(url.path)
+        let busy = jobs.filter { $0.status == .running || $0.status == .paused }.map(\.id)
+        let folders = busy.flatMap { workFolders($0) + [StorageScanner.standard(jobDir($0).path)] }
+        return folders.contains { f in path == f || path.hasPrefix(f + "/") || f.hasPrefix(path + "/") }
+    }
+
     private func eventsURL(_ id: UUID) -> URL { jobDir(id).appendingPathComponent("events.jsonl") }
     private func logURL(_ id: UUID) -> URL { jobDir(id).appendingPathComponent("log.txt") }
     private var jobsURL: URL { supportDir.appendingPathComponent("jobs.json") }
