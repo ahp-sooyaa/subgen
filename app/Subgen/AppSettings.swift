@@ -46,30 +46,46 @@ struct SettingsView: View {
 
     var body: some View {
         Form {
-            Picker("Appearance", selection: $appearance) {
-                ForEach(AppAppearance.allCases) { Text($0.label).tag($0) }
+            Section {
+                Picker("Appearance", selection: $appearance) {
+                    ForEach(AppAppearance.allCases) { Text($0.label).tag($0) }
+                }
+                .pickerStyle(.segmented)
+                .onChange(of: appearance) { _, a in a.apply() }
             }
-            .pickerStyle(.segmented)
-            .onChange(of: appearance) { _, a in a.apply() }
-            HStack {
-                TextField("subgen folder", text: $repoPath)
-                Button("Choose…") { if let p = chooseFolder() { repoPath = p } }
+            Section {
+                folderRow("subgen folder", path: $repoPath, note: "Must contain .venv/bin/subgen.")
+                folderRow("Subtitle output folder", path: $outputDir, note: nil)
             }
-            Text("Must contain .venv/bin/subgen.").font(.caption).foregroundStyle(.secondary)
-            HStack {
-                TextField("Subtitle output folder", text: $outputDir)
-                Button("Choose…") { if let p = chooseFolder() { outputDir = p } }
+            Section {
+                Picker("Translation model", selection: $model) {
+                    Text("Sonnet").tag("sonnet")
+                    Text("Opus").tag("opus")
+                }
+                Toggle(isOn: $hdCopy) {
+                    Text("Download HD copy for watching")
+                    Text("YouTube jobs also fetch 1080p for the viewer. Those files are roughly 2–3× larger.")
+                }
             }
-            Picker("Claude model for translation", selection: $model) {
-                Text("Sonnet").tag("sonnet")
-                Text("Opus").tag("opus")
-            }
-            Toggle("Download HD copy for watching", isOn: $hdCopy)
-            Text("YouTube jobs also fetch 1080p for the viewer. Those files are roughly 2–3× larger.")
-                .font(.caption).foregroundStyle(.secondary)
         }
-        .padding(20)
-        .frame(width: 520)
+        .formStyle(.grouped)
+        .frame(width: 560)
+        .fixedSize(horizontal: false, vertical: true)
+    }
+
+    private func folderRow(_ title: String, path: Binding<String>, note: String?) -> some View {
+        LabeledContent {
+            HStack {
+                TextField(title, text: path)
+                    .labelsHidden()
+                    .truncationMode(.head)
+                Button("Choose…") { if let p = chooseFolder() { path.wrappedValue = p } }
+            }
+            .frame(width: 300)
+        } label: {
+            Text(title)
+            if let note { Text(note) }
+        }
     }
 }
 
