@@ -4,9 +4,19 @@ English `.srt` subtitles for videos that have **burned-in Chinese captions** (e.
 It reads the on-screen captions with Apple Vision OCR (offline), then translates them with Claude Code
 in headless mode, which uses your Claude subscription.
 
+## Install
+Requires macOS (Apple Vision OCR), Python 3.11+, `ffmpeg` (`brew install ffmpeg`) and the
+[Claude Code](https://claude.com/claude-code) CLI, logged in.
+```
+git clone https://github.com/ahp-sooyaa/subgen.git
+cd subgen
+python3 -m venv .venv
+.venv/bin/pip install -e .
+```
+
 ## Use
 ```
-~/Personal/subgen/.venv/bin/subgen "https://www.youtube.com/watch?v=..." -o ~/Downloads
+.venv/bin/subgen "https://www.youtube.com/watch?v=..." -o ~/Downloads
 ```
 Outputs `<title>.zh.srt` and `<title>.en.srt`. Load the `.en.srt` into the Substital extension.
 
@@ -37,7 +47,7 @@ Requires `ffmpeg` (Homebrew) and the `claude` CLI logged in.
 ## Speech recognition (experimental, Mandarin only)
 For videos without burned-in captions, or to compare against OCR. Install the extra once:
 ```
-~/Personal/subgen/.venv/bin/pip install -e '.[asr]'
+.venv/bin/pip install -e '.[asr]'
 ```
 - `--asr whisper` (mlx-whisper large-v3-turbo) or `--asr sensevoice` (FunASR SenseVoiceSmall) uses the
   audio instead of OCR. `--asr merge` runs both and lets Claude reconcile them (most accurate).
@@ -56,9 +66,16 @@ glossary editor with "Save & Re-translate", and a viewer that plays the video wi
 lets you fix English lines. The viewer switches between 720p and the 1080p copy once it's downloaded
 (Settings → "Download HD copy for watching"). It runs `.venv/bin/subgen --events …`, so the CLI setup above is required.
 ```
-cd ~/Personal/subgen/app && xcodegen generate && xcodebuild -scheme Subgen -configuration Release -derivedDataPath build.noindex build
+cd app && xcodegen generate && xcodebuild -scheme Subgen -configuration Release -derivedDataPath build.noindex build
 open /Applications/Subgen.app
 ```
 A Release build installs itself to `/Applications/Subgen.app`, replacing any previous copy; quit the
 app before rebuilding.
 Settings (⌘,) set the subgen folder, output folder and Claude model.
+
+## Notes
+Only process videos you have the right to download and subtitle. Downloaded videos and generated
+subtitles stay in the local `work/` and `out/` folders and are not part of this repository.
+
+## License
+[MIT](LICENSE)
