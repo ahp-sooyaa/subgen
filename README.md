@@ -4,6 +4,10 @@ English `.srt` subtitles for videos that have **burned-in Chinese captions** (e.
 It reads the on-screen captions with Apple Vision OCR (offline), then translates them with Claude Code
 in headless mode, which uses your Claude subscription.
 
+[![Watch the 1-minute SubGen promo](docs/promo-poster.jpg)](docs/subgen-promo.mp4)
+
+▶ [Watch the 1-minute promo](docs/subgen-promo.mp4). It was made with Claude Code and [Remotion](https://www.remotion.dev).
+
 ## Install
 Requires macOS (Apple Vision OCR), Python 3.11+, `ffmpeg` (`brew install ffmpeg`) and the
 [Claude Code](https://claude.com/claude-code) CLI, logged in.
