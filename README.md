@@ -6,7 +6,11 @@ in headless mode, which uses your Claude subscription.
 
 [![Watch the 1-minute SubGen promo](docs/promo-poster.jpg)](docs/subgen-promo.mp4)
 
-▶ [Watch the 1-minute promo](docs/subgen-promo.mp4). It was made with Claude Code and [Remotion](https://www.remotion.dev).
+
+https://github.com/user-attachments/assets/da0c4f55-69b8-4fbb-b87d-36154184ae68
+
+
+▶ Watch the 1-minute promo. It was made with Claude Code and [Remotion](https://www.remotion.dev).
 
 ## Install
 Requires macOS (Apple Vision OCR), Python 3.11+, `ffmpeg` (`brew install ffmpeg`) and the
