@@ -3,6 +3,7 @@ import argparse
 import json
 import os
 import re
+import subprocess
 from pathlib import Path
 
 from . import cues as cuesmod
@@ -21,7 +22,8 @@ def main():
     ap.add_argument("--start", type=float, default=0, help="only process from this second (for testing)")
     ap.add_argument("--duration", type=float, help="only process this many seconds (for testing)")
     ap.add_argument("--region", help="caption band as x,y,w,h in pixels (skips auto-detection)")
-    ap.add_argument("--preview", action="store_true", help="save preview.jpg of the detected caption band and stop")
+    ap.add_argument("--preview", action="store_true", help="save preview frames of the detected caption bands and stop")
+    ap.add_argument("--no-review", action="store_true", help="don't have Claude check the caption bands before OCR")
     ap.add_argument("--fps", type=float, default=4, help="frames per second to read (default 4)")
     ap.add_argument("--sim", type=float, default=80, help="text similarity %% to treat frames as the same caption (default 80)")
     ap.add_argument("--change", type=float, default=0.1, help="pixel-change threshold that triggers a new OCR (default 0.1)")
@@ -94,33 +96,53 @@ def run(a):
 
     # 1. caption band
     reg_path = work / "region.json"
+    previews = work / "region_preview"
     if a.region:
         x, y, w, h = (int(v) for v in a.region.split(","))
         reg = {"crop": [x, y, w - w % 2, h - h % 2], "zones": []}
-        reg_path.write_text(json.dumps(reg))
     elif reg_path.exists() and redo > 0:
         reg = json.loads(reg_path.read_text())
         events.cached("region")
     else:
         with events.stage("region"):
-            reg = region.detect(video, W, H, a.start, end, n=min(120, max(40, int((end - a.start) / 10))))
-        reg_path.write_text(json.dumps(reg, ensure_ascii=False, indent=1))
+            # One sample every ~12 s (at most 480), so a stretch with captions somewhere else is seen.
+            reg = region.detect(video, W, H, a.start, end, n=min(480, max(40, int((end - a.start) / 12))))
+            region.render_previews(video, reg, previews)
+            if not a.no_review and not a.preview:
+                events.progress("region", 1, 1, "Claude is checking the caption area…")
+                print("  Claude is checking the caption area…")
+                try:
+                    reg = region.review(video, reg, previews, W, H, a.model)
+                except (RuntimeError, OSError, ValueError, subprocess.TimeoutExpired) as e:
+                    events.warn(f"Claude couldn't check the caption area ({e}); using it as detected.")
         redo = min(redo, 1)
-    print(f"  Caption band: {reg['crop']}  excluded zones: {len(reg['zones'])}")
+    reg = region.normalise(reg, a.start, end)
+    if not previews.is_dir() or any("images" not in b for b in reg["bands"]):
+        region.render_previews(video, reg, previews)  # --region, and jobs from before previews
+    reg_path.write_text(json.dumps(reg, ensure_ascii=False, indent=1))
+    for k, b in enumerate(reg["bands"]):
+        rv = b.get("review") or {}
+        note = ("  Claude: " + ("moved it. " if rv.get("fixed") else "") + rv.get("note", "")) if rv else ""
+        print(f"  Caption band {k + 1}: {b['crop']}  excluded zones: {len(b['zones'])}"
+              f"  used for {', '.join(region.stretches(reg, k))}{note}")
+    events.emit("region", path=str(reg_path.resolve()), bands=len(reg["bands"]))
     if a.preview:
-        region.preview(video, reg, work / "preview.jpg", a.start, end)
-        print(f"Preview saved: {work / 'preview.jpg'}")
+        print(f"Preview frames saved in {previews}")
         return
+    segments = reg["segments"]
 
     # 2. OCR
     frames = work / "frames.jsonl"
-    params = {"crop": reg["crop"], "zones": reg["zones"], "fps": a.fps, "change": a.change}
+    # A single band keeps the old params format, so older jobs keep their OCR cache.
+    params = {"crop": segments[0]["crop"], "zones": segments[0]["zones"], "fps": a.fps, "change": a.change}
+    if len(segments) > 1:
+        params["segments"] = [[s["start"], s["end"], s["crop"], s["zones"], s["fallback"]] for s in segments]
     params_path = work / "ocr_params.json"
     if redo <= 1 or not frames.exists() or not params_path.exists() or json.loads(params_path.read_text()) != params:
         if redo <= 1:  # don't continue an interrupted run
             (work / "ocr_running.json").unlink(missing_ok=True)
         with events.stage("ocr"):
-            ocr.ocr_video(video, frames, a.fps, reg["crop"], reg["zones"], BLACKLIST, a.change,
+            ocr.ocr_video(video, frames, a.fps, segments, BLACKLIST, a.change,
                           total, a.start, a.duration, params)
         params_path.write_text(json.dumps(params))
         redo = min(redo, 2)

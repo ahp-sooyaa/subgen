@@ -7,6 +7,7 @@ struct JobDetailView: View {
     @State private var showLog = false
     @State private var showGlossary = false
     @State private var confirmRemove = false
+    @State private var showRegion = false
 
     private var progress: JobProgress { store.progress[job.id] ?? JobProgress() }
     private var busy: Bool { job.status == .running || job.status == .paused }
@@ -23,6 +24,11 @@ struct JobDetailView: View {
         return !exists(progress.videoPath) || hdGone
     }
     private var canWatch: Bool { exists(progress.videoPath) || exists(progress.hdVideoPath) }
+    /// "Find caption area" opens its preview once the pipeline has written region.json.
+    private var hasRegion: Bool {
+        progress.workDir.map { exists(URL(fileURLWithPath: $0).appendingPathComponent("region.json").path) } ?? false
+    }
+    private func opensRegion(_ stage: String) -> Bool { stage == "region" && hasRegion }
 
     var body: some View {
         VStack(spacing: 0) {
@@ -53,6 +59,11 @@ struct JobDetailView: View {
                 GlossaryEditor(path: path, auto: progress.glossaryAuto) { retranslate in
                     if retranslate { store.retranslate(job.id) }
                 }
+            }
+        }
+        .sheet(isPresented: $showRegion) {
+            if let dir = progress.workDir {
+                RegionPreviewSheet(workDir: dir, onRedo: busy ? nil : { store.redo(job.id, from: "region") })
             }
         }
         .confirmationDialog("Remove this job?", isPresented: $confirmRemove) {
@@ -223,7 +234,8 @@ struct JobDetailView: View {
                     StageRow(name: name, stage: progress.stages[name],
                              active: here && job.status == .running,
                              paused: here && job.status == .paused,
-                             last: i == stages.count - 1)
+                             last: i == stages.count - 1,
+                             onOpen: opensRegion(name) ? { showRegion = true } : nil)
                 }
             }
         }
@@ -247,10 +259,13 @@ struct JobDetailView: View {
                         Text(t < 1 ? "cached" : formatDuration(t)).monospacedDigit().foregroundStyle(Theme.ink2)
                     }
                 }
-                .help(stage?.reason ?? "")
+                .help(opensRegion(name) ? "Show the caption area" : stage?.reason ?? "")
                 .font(.system(size: 12.5))
                 .padding(.leading, 8).padding(.trailing, 11).padding(.vertical, 6)
                 .card(8)
+                .contentShape(Rectangle())
+                .onTapGesture { if opensRegion(name) { showRegion = true } }
+                .pointerStyle(opensRegion(name) ? .link : nil)
             }
         }
     }
@@ -381,6 +396,8 @@ struct StageRow: View {
     let active: Bool
     let paused: Bool
     let last: Bool
+    /// Tapping the row shows what the stage found (the caption area).
+    var onOpen: (() -> Void)? = nil
 
     private var done: Bool { stage?.done == true }
 
@@ -398,6 +415,11 @@ struct StageRow: View {
                     Text(stageLabel(name))
                         .font(.system(size: 14, weight: active || paused ? .semibold : .regular))
                         .foregroundStyle(done || active || paused ? Theme.ink : Theme.ink2)
+                    if let onOpen {
+                        Button("Show", action: onOpen)
+                            .buttonStyle(LinkButtonStyle())
+                            .font(.system(size: 12.5, weight: .medium))
+                    }
                     Spacer()
                     Text(detail).font(.system(size: 12.5)).monospacedDigit().foregroundStyle(Theme.ink2)
                         .help(stage?.reason ?? "")

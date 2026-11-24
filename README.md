@@ -21,7 +21,8 @@ python3 -m venv .venv
 Outputs `<title>.zh.srt` and `<title>.en.srt`. Load the `.en.srt` into the Substital extension.
 
 Useful options:
-- `--preview`: save `work/<id>/preview.jpg` showing the detected caption band (green), then stop.
+- `--preview`: save preview frames of the detected caption bands (green) to `work/<id>/region_preview/`, then stop.
+- `--no-review`: skip Claude's check of the caption bands before OCR.
 - `--region x,y,w,h`: set the caption band manually in pixels if auto-detection picks the wrong area.
 - `--start 300 --duration 180`: process only part of the video (quick test).
 - `--speakers`: prefix lines with the speaker name (`Na Ying: …`).
@@ -37,8 +38,11 @@ Useful options:
 1. `yt-dlp` downloads 720p H.264. Meanwhile a 1080p H.264 copy (`work/<id>/video.1080.mp4`) downloads in the
    background for watching only; it reuses the 720p audio and is dropped if the lengths differ or YouTube has no
    1080p H.264. Processing always uses 720p.
-2. About 40–120 frames are OCR'd to find the band where changing text lives (the caption band).
-3. `ffmpeg` crops that band at 4 fps. A frame is only OCR'd when its white-text pixels change.
+2. A frame every ~12 s (40–480 frames) is OCR'd to find the band where changing text lives (the caption band).
+   Stretches where captions move elsewhere for a while (e.g. above a quiz card) get their own band.
+   Claude then looks at preview frames of each band and moves any that miss the captions. In the app,
+   click "Find caption area" to see them.
+3. `ffmpeg` crops each stretch's band at 4 fps. A frame is only OCR'd when its white-text pixels change.
 4. Watermarks, sponsor badges (far left and right edges) and blacklisted words are dropped. Frames with the same text are merged into timed cues.
 5. Cues are translated in batches of 80 with `claude -p` (three batches at a time). Ads and OCR garbage come back as `[DROP]` and are removed.
 

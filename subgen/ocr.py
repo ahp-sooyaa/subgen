@@ -141,10 +141,11 @@ def iter_frames(video: Path, fps: float, crop: tuple[int, int, int, int], start:
         proc.wait()
 
 
-def ocr_video(video: Path, out: Path, fps: float, crop, zones, blacklist, change_thresh: float,
+def ocr_video(video: Path, out: Path, fps: float, segments: list[dict], blacklist, change_thresh: float,
               total: float, start: float = 0, duration: float | None = None, params: dict | None = None):
     """OCR every sampled frame of the band; writes JSONL of {t, text}.
 
+    `segments` are time ranges, each with its own band (`crop`) and excluded `zones`.
     `params` identify the run: if an interrupted run with the same params left a partial
     `out`, it continues after its last frame instead of starting over.
     """
@@ -167,12 +168,44 @@ def ocr_video(video: Path, out: Path, fps: float, crop, zones, blacklist, change
             print(f"  Resuming OCR at {begin / 60:.1f} min")
     if params is not None:
         running.write_text(json.dumps(params))
-    rest = duration - (begin - start) if duration else None
+    stop = start + duration if duration else total
+    last_t = begin - 1e-6
+
+    def frames():
+        # Each segment from the first frame on the fps grid at or after its start; a new band
+        # has a different size, so change detection starts over. A segment with a fallback band
+        # decodes the area covering both and reads the fallback only when its own band is empty.
+        nonlocal prev_mask
+        for seg in segments:
+            s, e = max(seg["start"], begin), min(seg["end"], stop)
+            s = start + np.ceil((s - start) * fps - 1e-6) / fps
+            if s >= e:
+                continue
+            bands = [(seg["crop"], seg["zones"])]
+            if seg.get("fallback"):
+                bands.append((seg["fallback"]["crop"], seg["fallback"]["zones"]))
+            top = min(c[1] for c, _ in bands)
+            bot = max(c[1] + c[3] for c, _ in bands)
+            x, _, w, _ = seg["crop"]
+            area = [x, top, w, bot - top - (bot - top) % 2]
+            parts = [(c[1] - top, c[3], z) for c, z in bands]
+            prev_mask = None
+            for t, img in iter_frames(video, fps, area, s, e - s + 1 / fps):
+                if t >= e:
+                    break
+                yield t, img, parts
+
     with out.open(mode) as f:
-        for t, img in iter_frames(video, fps, crop, begin, rest):
+        for t, img, parts in frames():
+            if t <= last_t:
+                continue
+            last_t = t
             mask = text_mask(img)
             if changed(prev_mask, mask, change_thresh):
-                prev_text = read_band(img, blacklist, zones)
+                for y0, h0, zones in parts:
+                    prev_text = read_band(img[y0:y0 + h0], blacklist, zones)
+                    if prev_text:
+                        break
                 prev_mask = mask
                 n_ocr += 1
             f.write(json.dumps({"t": round(t, 3), "text": prev_text}, ensure_ascii=False) + "\n")
